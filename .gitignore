@@ -1,0 +1,9 @@
+__pycache__/
+.venv/
+.pytest_cache/
+build/
+dist/
+*.spec
+assets/sprites/*.png
+!assets/sprites/.gitkeep
+*.blend1
