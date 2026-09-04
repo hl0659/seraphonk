@@ -50,7 +50,23 @@ func _process(_dt: float) -> bool:
 			player.global_position = Vector3(10, 0.5, 8)
 		1400:
 			note("vendor_sells", int(game.get("vendor_cost")) > 30)
-	if frames >= 1500:
+		1500:
+			for w in game.get("weapons"):
+				if w["id"] == "chakram":
+					w["lvl"] = 5
+			(game.get("tomes") as Dictionary)["quantity"] = 2
+			var offered := false
+			for o in game.call("_draft_options"):
+				if (o as Dictionary).get("kind") == "evolve":
+					offered = true
+					game.call("_pick_draft", o)
+			note("evolve_offered", offered)
+		1700:
+			var ids: Array = []
+			for w in game.get("weapons"):
+				ids.append(w["id"])
+			note("wheel_equipped", "wheel" in ids)
+	if frames >= 1800:
 		print("SIM2: done. summary:")
 		for k in checks.keys():
 			print("  ", k, "=", "PASS" if checks[k] else "FAIL")

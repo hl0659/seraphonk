@@ -5,14 +5,17 @@ var dmg := 10.0
 var life := 3.0
 var dead := false
 var hostile := false
+var pierce := 0
 var mesh: MeshInstance3D
+var hit_ids: Array = []
 
-func setup(from: Vector3, dir: Vector3, speed: float, p_dmg: float, p_life: float, p_hostile: bool = false) -> void:
+func setup(from: Vector3, dir: Vector3, speed: float, p_dmg: float, p_life: float, p_hostile: bool = false, p_pierce: int = 0) -> void:
 	global_position = from
 	vel = dir.normalized() * speed
 	dmg = p_dmg
 	life = p_life
 	hostile = p_hostile
+	pierce = p_pierce
 	mesh = MeshInstance3D.new()
 	var sm := SphereMesh.new()
 	sm.radius = 0.26 if hostile else 0.18

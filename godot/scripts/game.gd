@@ -6,6 +6,7 @@ extends Node3D
 
 const RUN_LEN := 600.0
 const ARENA := Vector2(40.0, 30.0)
+const WEAPON_MAX := 5
 
 var player: CharacterBody3D
 var cam: Camera3D
@@ -54,18 +55,30 @@ var dmg_flash := 0.0
 var vignette: ColorRect
 var sens_mult := 1.0
 var shake_mult := 1.0
+var meta := {"runs": 0, "victories": 0, "kills": 0}
 
 func _load_settings() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load("user://seraphonk.cfg") == OK:
 		sens_mult = float(cfg.get_value("feel", "sensitivity", 1.0))
 		shake_mult = float(cfg.get_value("feel", "shake", 1.0))
+	if cfg.load("user://seraphonk_meta.cfg") == OK:
+		meta["runs"] = int(cfg.get_value("meta", "runs", 0))
+		meta["victories"] = int(cfg.get_value("meta", "victories", 0))
+		meta["kills"] = int(cfg.get_value("meta", "kills", 0))
 
 func _save_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.set_value("feel", "sensitivity", sens_mult)
 	cfg.set_value("feel", "shake", shake_mult)
 	cfg.save("user://seraphonk.cfg")
+
+func _save_meta() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("meta", "runs", int(meta["runs"]))
+	cfg.set_value("meta", "victories", int(meta["victories"]))
+	cfg.set_value("meta", "kills", int(meta["kills"]) + kills)
+	cfg.save("user://seraphonk_meta.cfg")
 
 func _try_model(path: String) -> Node3D:
 	if not ResourceLoader.exists(path):
@@ -88,6 +101,13 @@ func _ready() -> void:
 	cam = $Player/Cam
 	cam_base_fov = cam.fov
 	player.set("sens_mult", sens_mult)
+	# meta blessings: veterans start stronger (Silver Grace across runs)
+	meta["runs"] = int(meta["runs"]) + 1
+	_save_meta()
+	gold = 10 * int(meta["victories"])
+	var hp_bonus := 5 * (int(meta["runs"]) / 3)
+	player.set("max_hp", 100.0 + hp_bonus)
+	player.set("hp", 100.0 + hp_bonus)
 	sfx = Node.new()
 	sfx.set_script(load("res://scripts/sfx.gd"))
 	add_child(sfx)
@@ -128,6 +148,12 @@ func _show_start() -> void:
 	g.text = "You are a seraph. The fallen swarm.\nSurvive, gather grace, choose blessings.\nAt 5:00 the Gate unseals — enter it and slay the Warden.\nAt 10:00 the Wrath comes for the slow."
 	g.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(g)
+	var meta_l := Label.new()
+	meta_l.add_theme_font_size_override("font_size", 14)
+	meta_l.text = "Across runs: %d flights · %d victories · %d fallen · starting +%d gold, +%d HP" % [
+		int(meta["runs"]), int(meta["victories"]), int(meta["kills"]),
+		10 * int(meta["victories"]), 5 * (int(meta["runs"]) / 3)]
+	vb.add_child(meta_l)
 	var c := Label.new()
 	c.add_theme_font_size_override("font_size", 16)
 	c.text = "WASD move (W = sprint) · MOUSE look · SHIFT dash (invincible) · SPACE jump (mid-dash = dash-jump) · CTRL slide, CTRL in air = slam · ESC pause · R restart"
@@ -504,9 +530,15 @@ func _weapons(dt: float) -> void:
 		if w["id"] == "chakram":
 			w["cd"] = maxf(0.35, 0.9 - w["lvl"] * 0.07)
 			_chakram_burst(int(w["lvl"]) + qty - 1, 2.6 + tomes["radius"] * 0.4, 16.0 + w["lvl"] * 6.0)
+		elif w["id"] == "wheel":
+			w["cd"] = 0.45
+			_chakram_burst(6 + qty, 3.4 + tomes["radius"] * 0.4, 30.0, true)
 		elif w["id"] == "trumpet":
 			w["cd"] = maxf(0.3, 1.1 - w["lvl"] * 0.08)
-			_trumpet_volley(qty + int(w["lvl"]) / 2, 12.0 + w["lvl"] * 5.0)
+			_trumpet_volley(qty + int(w["lvl"]) / 2, 12.0 + w["lvl"] * 5.0, 0)
+		elif w["id"] == "choir":
+			w["cd"] = 0.7
+			_trumpet_volley(4 + qty, 26.0, 3)
 
 func _nearest_enemy(max_d: float) -> Node3D:
 	var best: Node3D = null
@@ -520,13 +552,13 @@ func _nearest_enemy(max_d: float) -> Node3D:
 			best = e
 	return best
 
-func _chakram_burst(count: int, radius: float, dmg: float) -> void:
+func _chakram_burst(count: int, radius: float, dmg: float, golden: bool = false) -> void:
 	for i in count:
-		var a := TAU * float(i) / float(maxi(1, count)) + t * 2.5
+		var a := TAU * float(i) / float(maxi(1, count)) + t * (3.5 if golden else 2.5)
 		var hit_pos := player.global_position + Vector3(cos(a), 0, sin(a)) * radius
-		_damage_area(hit_pos, 2.2 + tomes["radius"] * 0.25, dmg, false)
+		_damage_area(hit_pos, (2.8 if golden else 2.2) + tomes["radius"] * 0.25, dmg, golden)
 
-func _trumpet_volley(count: int, dmg: float) -> void:
+func _trumpet_volley(count: int, dmg: float, pierce: int = 0) -> void:
 	# FPS aim: crosshair cone first, else nearest enemy (guns never feel dead)
 	var aim: Vector3 = -cam.global_transform.basis.z
 	var target := _enemy_in_crosshair(0.985)
@@ -538,7 +570,7 @@ func _trumpet_volley(count: int, dmg: float) -> void:
 		p.set_script(load("res://scripts/projectile.gd"))
 		add_child(p)
 		var dir: Vector3 = base_dir.rotated(Vector3.UP, (float(i) - float(count - 1) * 0.5) * 0.1)
-		p.call("setup", player.global_position + Vector3(0, 1.5, 0), dir, 26.0, dmg, 2.5)
+		p.call("setup", player.global_position + Vector3(0, 1.5, 0), dir, 26.0, dmg, 2.5, false, pierce)
 		projectiles.append(p)
 	sfx.call("play", "shoot")
 
@@ -688,10 +720,17 @@ func _projectiles(dt: float) -> void:
 				continue
 			var en := e as Node3D
 			if en.global_position.distance_to(pr.global_position) <= 1.0 + float(en.get("radius")):
+				var seen: Array = pr.get("hit_ids")
+				if en.get_instance_id() in seen:
+					continue
+				seen.append(en.get_instance_id())
 				en.call("damage", float(pr.get("dmg")), pr.global_position)
 				_spawn_damage_number(en.global_position + Vector3(0, 2.0, 0), int(float(pr.get("dmg"))))
 				if float(en.get("hp")) <= 0.0:
 					_kill_enemy(en, false)
+				if int(pr.get("pierce")) > 0:
+					pr.set("pierce", int(pr.get("pierce")) - 1)
+					continue
 				pr.set("dead", true)
 				dead.append(p)
 				break
@@ -766,17 +805,43 @@ func _open_draft() -> void:
 	(hud_layer.get_node("DraftDim") as CanvasItem).visible = true
 	(hud_layer.get_node("DraftCenter") as CanvasItem).visible = true
 
+func _has_weapon(id: String) -> Dictionary:
+	for w in weapons:
+		if w["id"] == id:
+			return w
+	return {}
+
 func _draft_options() -> Array:
-	var pool: Array = [
+	var pool: Array = []
+	# evolutions first: maxed base + paired tome = ascended form
+	var chak := _has_weapon("chakram")
+	var trum := _has_weapon("trumpet")
+	if not chak.is_empty() and int(chak["lvl"]) >= WEAPON_MAX and int(tomes["quantity"]) >= 2 and _has_weapon("wheel").is_empty():
+		pool.append({"kind": "evolve", "id": "wheel", "from": "chakram", "label": "EVOLVE: Seraphim Wheel (chakram ascended)"})
+	if not trum.is_empty() and int(trum["lvl"]) >= WEAPON_MAX and int(tomes["zeal"]) >= 2 and _has_weapon("choir").is_empty():
+		pool.append({"kind": "evolve", "id": "choir", "from": "trumpet", "label": "EVOLVE: Choir Eternal (trumpet ascended)"})
+	var pool2: Array = [
 		{"kind": "weapon", "id": "trumpet", "label": "Trumpet Volley (auto, nearest)"},
-		{"kind": "up", "id": "chakram", "label": "Empower Chakram +dmg"},
 		{"kind": "tome", "id": "quantity", "label": "Tome of Quantity +projectile"},
 		{"kind": "tome", "id": "zeal", "label": "Tome of Zeal +attack speed"},
 		{"kind": "tome", "id": "radius", "label": "Tome of Radius +area/magnet"},
 		{"kind": "tome", "id": "swiftness", "label": "Feather of Swiftness +move"},
 	]
-	pool.shuffle()
-	return pool.slice(0, 3)
+	var can_up := false
+	for w in weapons:
+		if int(w["lvl"]) < WEAPON_MAX:
+			can_up = true
+	if can_up:
+		pool2.append({"kind": "up", "id": "all", "label": "Empower weapons +dmg"})
+	pool2.shuffle()
+	pool.append_array(pool2)
+	while pool.size() > 3:
+		# evolutions always offered when available
+		if pool[3]["kind"] == "evolve":
+			pool.pop_at(0)
+		else:
+			pool.pop_back()
+	return pool
 
 func _pick_draft(o: Dictionary) -> void:
 	if o["kind"] == "weapon":
@@ -786,9 +851,18 @@ func _pick_draft(o: Dictionary) -> void:
 				has = true
 		if not has and weapons.size() < 4:
 			weapons.append({"id": o["id"], "lvl": 1, "cd": 0.0})
+	elif o["kind"] == "evolve":
+		for i in weapons.size():
+			if weapons[i]["id"] == o["from"]:
+				weapons.remove_at(i)
+				break
+		weapons.append({"id": o["id"], "lvl": 1, "cd": 0.0})
+		sfx.call("play", "evolve")
+		trauma = minf(1.0, trauma + 0.4)
 	elif o["kind"] == "up":
 		for w in weapons:
-			w["lvl"] += 1
+			if int(w["lvl"]) < WEAPON_MAX:
+				w["lvl"] += 1
 	else:
 		tomes[o["id"]] = int(tomes[o["id"]]) + 1
 		if o["id"] == "swiftness":
@@ -996,6 +1070,9 @@ func _hud() -> void:
 			obj.text = "Survive · gather grace · Gate opens in %d:%02d" % [left / 60, left % 60]
 
 func _show_end(won: bool) -> void:
+	if won:
+		meta["victories"] = int(meta["victories"]) + 1
+	_save_meta()
 	if DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	var l := Label.new()

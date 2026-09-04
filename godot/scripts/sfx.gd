@@ -48,9 +48,11 @@ func play(name: String) -> void:
 		"chest": s = _tone(520, 1560, 0.25, 0.4, 0.05)
 		"shrine": s = _tone(392, 1175, 0.4, 0.4, 0.0)
 		"boss": s = _tone(98, 65, 0.7, 0.6, 0.3)
+		"evolve": s = _tone(523, 2093, 0.6, 0.45, 0.0)
 		"die": s = _tone(330, 82, 0.5, 0.5, 0.2)
 		_: return
 	var p: AudioStreamPlayer = players[idx]
 	idx = (idx + 1) % players.size()
 	p.stream = s
+	p.pitch_scale = randf_range(0.94, 1.06) if name in ["shoot", "hit", "pickup"] else 1.0
 	p.play()
