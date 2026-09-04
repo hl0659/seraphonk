@@ -64,6 +64,7 @@ func _process(_dt: float) -> bool:
 			game.call("_record_run", false)
 			note("run_history", "first" not in game.call("_run_history_text"))
 			game.set("t", 301.0)
+			game.set("stage_t", 301.0)
 		800:
 			player.global_position = Vector3(0, 0.5, -13)
 		1050:
@@ -111,6 +112,7 @@ func _process(_dt: float) -> bool:
 		2100:
 			note("surge_event", float(game.get("surge_t")) > 0.0)
 			game.set("t", 301.0)
+			game.set("stage_t", 301.0)
 		2200:
 			player.global_position = Vector3(0, 0.5, -13)
 		2500:
@@ -123,7 +125,7 @@ func _process(_dt: float) -> bool:
 				var wp: Vector3 = (game.get("warden") as Node3D).global_position
 				game.call("_damage_area", wp, 10.0, 999999.0, true)
 		2900:
-			note("victory_on_warden_kill", bool(game.get("victory")))
+			note("victory_on_warden_kill", int(game.get("stage")) == 2)
 			game.set("victory", false)
 			game.set("t", 601.0)
 		3100:

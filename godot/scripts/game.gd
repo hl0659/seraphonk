@@ -55,6 +55,9 @@ var dmg_flash := 0.0
 var vignette: ColorRect
 var sens_mult := 1.0
 var shake_mult := 1.0
+var stage := 1
+var stage_t := 0.0
+var lavas: Array = []  # [{pos, r}]
 var style := 0.0
 var style_label: Label
 var announce_label: Label
@@ -277,6 +280,7 @@ func _build_arena() -> void:
 	mat.emission = Color(0.25, 0.22, 0.45)
 	mat.emission_energy_multiplier = 0.35
 	mesh.material_override = mat
+	set_meta("floor_mat", mat)
 	floor_body.add_child(mesh)
 	floor_body.position = Vector3(0, -0.25, 0)
 	add_child(floor_body)
@@ -560,6 +564,7 @@ func _process(dt: float) -> void:
 		hitstop_t -= dt
 		return
 	t += dt
+	stage_t += dt
 	_director(dt)
 	_weapons(dt)
 	_enemies(dt)
@@ -568,6 +573,7 @@ func _process(dt: float) -> void:
 	_shrines(dt)
 	_chests()
 	_vendor(dt)
+	_lava(dt)
 	_gate(dt)
 	_warden_fight(dt)
 	_rings(dt)
@@ -628,10 +634,13 @@ func _director(dt: float) -> void:
 				_spawn_enemy(false, false)
 
 func _cantor_ok() -> String:
-	# cantors (ranged pressure) join after the first minute, brutes after two
-	if t > 120.0 and randf() < 0.18:
+	# cantors (ranged pressure) join after the first minute, brutes after two;
+	# stage 2 fields veterans from the start
+	if stage == 2 and randf() < 0.22:
 		return "brute"
-	if t > 60.0 and randf() < 0.3:
+	if (stage == 2 or t > 120.0) and randf() < 0.18:
+		return "brute"
+	if (stage == 2 or t > 60.0) and randf() < 0.3:
 		return "cantor"
 	return "chaser"
 
@@ -643,7 +652,7 @@ func _spawn_enemy(elite: bool, flying: bool = false, kind: String = "chaser") ->
 	var pp: Vector3 = player.global_position
 	e.position = Vector3(clampf(pp.x + cos(ang) * r, -ARENA.x * 0.5 + 1.0, ARENA.x * 0.5 - 1.0), 0, clampf(pp.z + sin(ang) * r, -ARENA.y * 0.5 + 1.0, ARENA.y * 0.5 - 1.0))
 	add_child(e)
-	var hp_scale := 1.0 + t / 120.0
+	var hp_scale := (1.0 + t / 120.0) * (1.5 if stage == 2 else 1.0)
 	e.call("setup", elite, hp_scale, flying, kind)
 	enemies.append(e)
 
@@ -795,8 +804,11 @@ func _kill_enemy(e: Node3D, heavy: bool) -> void:
 		player.set("trauma", minf(1.0, float(player.get("trauma")) + 0.3))
 	if e == warden:
 		warden = null
-		victory = true
-		_show_end(true)
+		if stage == 1:
+			_ascend_stage()
+		else:
+			victory = true
+			_show_end(true)
 	e.queue_free()
 
 func _spawn_pickup(pos: Vector3, elite: bool) -> void:
@@ -1099,7 +1111,7 @@ func _shrines(dt: float) -> void:
 			if float(s["progress"]) >= 3.0:
 				s["done"] = true
 				(s["node"] as MeshInstance3D).visible = false
-				if s.has("marker") and is_instance_valid(s["marker"] as Node):
+				if is_instance_valid(s["marker"]):
 					(s["marker"] as Node).queue_free()
 				player.set("hp", minf(float(player.get("max_hp")), float(player.get("hp")) + 30.0))
 				tomes["zeal"] = int(tomes["zeal"]) + 1
@@ -1118,7 +1130,7 @@ func _chests() -> void:
 			gold -= int(c["cost"])
 			c["opened"] = true
 			(c["node"] as MeshInstance3D).visible = false
-			if c.has("marker") and is_instance_valid(c["marker"] as Node):
+			if is_instance_valid(c["marker"]):
 				(c["marker"] as Node).queue_free()
 			chest_count += 1
 			var roll := randi() % 3
@@ -1134,8 +1146,68 @@ func _chests() -> void:
 			sfx.call("play", "chest")
 			trauma = minf(1.0, trauma + 0.25)
 
+func _ascend_stage() -> void:
+	# the Warden falls — the choir descends into the Sunken Nave (stage 2)
+	stage = 2
+	stage_t = 0.0
+	gate_sealed = true
+	warden_spawned = false
+	warden_enraged = false
+	warden_phase = 0
+	player.set("hp", float(player.get("max_hp")))
+	_announce("THE SUNKEN NAVE — the Gate will reopen", 4.0)
+	sfx.call("play", "evolve")
+	if gate_node and gate_node.has_meta("marker"):
+		var gmk := gate_node.get_meta("marker") as Label3D
+		if is_instance_valid(gmk):
+			gmk.text = "SANCTUM · sealed"
+			gmk.modulate = Color(0.6, 0.6, 0.7)
+		(gate_node.material_override as StandardMaterial3D).emission_energy_multiplier = 0.6
+	var ember := OmniLight3D.new()
+	ember.name = "EmberLight"
+	ember.light_color = Color(1.0, 0.35, 0.12)
+	ember.light_energy = 1.4
+	ember.omni_range = 40.0
+	ember.position = Vector3(0, 10, 0)
+	add_child(ember)
+	if has_meta("floor_mat"):
+		(get_meta("floor_mat") as StandardMaterial3D).emission = Color(0.7, 0.15, 0.05)
+	for lp in [Vector3(-10, 0, -6), Vector3(10, 0, -6), Vector3(0, 0, 8)]:
+		var pool := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 2.2
+		cm.bottom_radius = 2.2
+		cm.height = 0.1
+		pool.mesh = cm
+		var m := StandardMaterial3D.new()
+		m.albedo_color = Color(1, 0.4, 0.1)
+		m.emission_enabled = true
+		m.emission = Color(1.0, 0.3, 0.05)
+		m.emission_energy_multiplier = 2.5
+		pool.material_override = m
+		pool.position = lp + Vector3(0, 0.06, 0)
+		add_child(pool)
+		lavas.append({"pos": lp, "r": 2.2})
+	for c in chests:
+		if not bool(c["opened"]):
+			continue
+		c["opened"] = false
+		(c["node"] as MeshInstance3D).visible = true
+		if is_instance_valid(c["marker"]):
+			(c["marker"] as Node).queue_free()
+		c["marker"] = _marker("CACHE", (c["pos"] as Vector3) + Vector3(0, 2.2, 0), Color(1.0, 0.8, 0.3))
+
+func _lava(dt: float) -> void:
+	if lavas.is_empty():
+		return
+	for l in lavas:
+		var d: float = Vector2(player.global_position.x - (l["pos"] as Vector3).x, player.global_position.z - (l["pos"] as Vector3).z).length()
+		if d < float(l["r"]) and player.global_position.y < 0.6:
+			_hurt_player(10.0 * dt)
+
 func _gate(dt: float) -> void:
-	if t >= 300.0 and gate_sealed:
+	var unseal_at := 240.0 if stage == 2 else 300.0
+	if stage_t >= unseal_at and gate_sealed:
 		gate_sealed = false
 		if gate_node:
 			(gate_node.material_override as StandardMaterial3D).emission_energy_multiplier = 2.5
@@ -1156,15 +1228,15 @@ func _spawn_warden(gp: Vector3) -> void:
 	e.set_script(load("res://scripts/enemy.gd"))
 	add_child(e)
 	e.position = gp
-	e.call("setup", true, 1.0 + t / 120.0)
+	e.call("setup", true, (1.0 + t / 120.0) * (1.6 if stage == 2 else 1.0))
 	e.set("max_hp", float(e.get("max_hp")) * 8.0)
 	e.set("hp", float(e.get("max_hp")))
-	e.set("speed", 3.0)
-	e.set("contact", 25.0)
+	e.set("speed", 2.6 if stage == 2 else 2.0)
+	e.set("contact", 30.0 if stage == 2 else 25.0)
 	e.set("radius", 1.6)
 	enemies.append(e)
 	warden = e
-	sfx.call("play", "boss")
+	_announce("THE NAVE TYRANT" if stage == 2 else "THE GATE WARDEN", 3.0)
 
 func _tracers(dt: float) -> void:
 	var done: Array = []
@@ -1291,8 +1363,8 @@ func _juice(dt: float) -> void:
 func _hud(dt: float) -> void:
 	var mins := int(t) / 60
 	var secs := int(t) % 60
-	hud_label.text = "HP %.0f | LV %d XP %.0f/%.0f | %02d:%02d / 10:00 | Kills %d | Gold %d | Enemies %d" % [
-		maxf(0.0, float(player.get("hp"))), level, xp, xp_next, mins, secs, kills, gold, enemies.size()]
+	hud_label.text = "S%d HP %.0f | LV %d XP %.0f/%.0f | %02d:%02d / 10:00 | Kills %d | Gold %d | Enemies %d" % [
+		stage, maxf(0.0, float(player.get("hp"))), level, xp, xp_next, mins, secs, kills, gold, enemies.size()]
 	style = maxf(0.0, style - dt * 0.05)
 	var rank := _style_rank()
 	style_label.text = rank[0]
