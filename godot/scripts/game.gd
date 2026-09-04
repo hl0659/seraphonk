@@ -7,6 +7,11 @@ extends Node3D
 const RUN_LEN := 600.0
 const ARENA := Vector2(40.0, 30.0)
 const WEAPON_MAX := 5
+const STAGES := {
+	1: {"name": "OUTER CHOIR", "unseal": 300.0, "hpmult": 1.0, "boss": "THE GATE WARDEN", "contact": 25.0, "speed": 2.0},
+	2: {"name": "SUNKEN NAVE", "unseal": 240.0, "hpmult": 1.5, "boss": "THE NAVE TYRANT", "contact": 30.0, "speed": 2.6},
+	3: {"name": "THRONE APPROACH", "unseal": 200.0, "hpmult": 2.2, "boss": "THE THRONE", "contact": 36.0, "speed": 1.8},
+}
 
 var player: CharacterBody3D
 var cam: Camera3D
@@ -57,7 +62,22 @@ var sens_mult := 1.0
 var shake_mult := 1.0
 var stage := 1
 var stage_t := 0.0
+var run_seed := 0
+var layout_rng := RandomNumberGenerator.new()
 var lavas: Array = []  # [{pos, r}]
+var strikes: Array = []  # stage-3 radiant storms [{pos, t, node}]
+
+func _lshuffle(a: Array) -> Array:
+	# daily-seeded shuffle: layouts only, gameplay rolls stay live
+	var b := a.duplicate()
+	var i := b.size() - 1
+	while i > 0:
+		var j := layout_rng.randi_range(0, i)
+		var tmp = b[i]
+		b[i] = b[j]
+		b[j] = tmp
+		i -= 1
+	return b
 var style := 0.0
 var style_label: Label
 var announce_label: Label
@@ -134,6 +154,10 @@ func _ready() -> void:
 	# UI + manager must run while paused (start/draft/pause menus)
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_load_settings()
+	# daily seed: one shared layout per calendar day (community + variety)
+	var dt_now := Time.get_datetime_dict_from_system()
+	run_seed = int(dt_now["year"]) * 10000 + int(dt_now["month"]) * 100 + int(dt_now["day"])
+	layout_rng.seed = run_seed
 	player = $Player
 	cam = $Player/Cam
 	cam_base_fov = cam.fov
@@ -196,6 +220,10 @@ func _show_start() -> void:
 	hist.text = _run_history_text()
 	hist.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(hist)
+	var seed_l := Label.new()
+	seed_l.add_theme_font_size_override("font_size", 13)
+	seed_l.text = "Today's choir (seed %d) — same arena all day" % run_seed
+	vb.add_child(seed_l)
 	var c := Label.new()
 	c.add_theme_font_size_override("font_size", 16)
 	c.text = "WASD move (W = sprint) · MOUSE look · SHIFT dash (invincible) · SPACE jump (mid-dash = dash-jump) · CTRL slide, CTRL in air = slam · ESC pause · R restart"
@@ -286,7 +314,7 @@ func _build_arena() -> void:
 	add_child(floor_body)
 	# glowing choir pillars (cover + slam reference) — 5 of 8 candidate naves per run
 	var pillar_pool := [Vector3(-12, 0, -8), Vector3(12, 0, -8), Vector3(-12, 0, 8), Vector3(12, 0, 8), Vector3(0, 0, 0), Vector3(-6, 0, -5), Vector3(6, 0, 5), Vector3(-14, 0, 1), Vector3(14, 0, -1)]
-	pillar_pool.shuffle()
+	pillar_pool = _lshuffle(pillar_pool)
 	var pillar_pos := pillar_pool.slice(0, 5)
 	for i in pillar_pos.size():
 		var p: Vector3 = pillar_pos[i]
@@ -321,7 +349,7 @@ func _build_arena() -> void:
 		add_child(sb)
 	# jumpable choir platforms (slam-from-above plays, escape routes) — 3 of 5 per run
 	var plat_pool := [[Vector3(-6, 0, 4), 1.0], [Vector3(6, 0, -4), 1.0], [Vector3(0, 0, -9), 1.9], [Vector3(-9, 0, -3), 1.0], [Vector3(9, 0, 3), 1.9]]
-	plat_pool.shuffle()
+	plat_pool = _lshuffle(plat_pool)
 	var plat_spots := plat_pool.slice(0, 3)
 	for ps in plat_spots:
 		var ppos: Vector3 = ps[0]
@@ -486,7 +514,7 @@ func _try_capture(event: InputEvent) -> void:
 
 func _build_shrines_chests() -> void:
 	var shrine_pool := [Vector3(-16, 0, 0), Vector3(16, 0, 0), Vector3(0, 0, 10), Vector3(-10, 0, -10), Vector3(10, 0, -10)]
-	shrine_pool.shuffle()
+	shrine_pool = _lshuffle(shrine_pool)
 	var shrine_spots := shrine_pool.slice(0, 3)
 	for i in shrine_spots.size():
 		var ring := MeshInstance3D.new()
@@ -507,7 +535,7 @@ func _build_shrines_chests() -> void:
 		shrines.append({"pos": shrine_spots[i], "r": 2.5, "progress": 0.0, "done": false, "node": ring,
 			"marker": _marker("BLESS", shrine_spots[i] + Vector3(0, 3.0, 0), Color(0.4, 0.7, 1.0))})
 	var chest_pool := [Vector3(-8, 0, -11), Vector3(8, 0, -11), Vector3(0, 0, 12), Vector3(-15, 0, 6), Vector3(15, 0, 6)]
-	chest_pool.shuffle()
+	chest_pool = _lshuffle(chest_pool)
 	var chest_spots := chest_pool.slice(0, 3)
 	for i in chest_spots.size():
 		var box := MeshInstance3D.new()
@@ -574,6 +602,7 @@ func _process(dt: float) -> void:
 	_chests()
 	_vendor(dt)
 	_lava(dt)
+	_storms(dt)
 	_gate(dt)
 	_warden_fight(dt)
 	_rings(dt)
@@ -804,11 +833,7 @@ func _kill_enemy(e: Node3D, heavy: bool) -> void:
 		player.set("trauma", minf(1.0, float(player.get("trauma")) + 0.3))
 	if e == warden:
 		warden = null
-		if stage == 1:
-			_ascend_stage()
-		else:
-			victory = true
-			_show_end(true)
+		_ascend_stage()  # stage+1, or victory past stage 3
 	e.queue_free()
 
 func _spawn_pickup(pos: Vector3, elite: bool) -> void:
@@ -1147,29 +1172,44 @@ func _chests() -> void:
 			trauma = minf(1.0, trauma + 0.25)
 
 func _ascend_stage() -> void:
-	# the Warden falls — the choir descends into the Sunken Nave (stage 2)
-	stage = 2
+	# stage clear — descend deeper, or claim the Throne
+	if stage >= 3:
+		victory = true
+		_show_end(true)
+		return
+	stage += 1
+	var cfg: Dictionary = STAGES[stage]
 	stage_t = 0.0
 	gate_sealed = true
 	warden_spawned = false
 	warden_enraged = false
 	warden_phase = 0
 	player.set("hp", float(player.get("max_hp")))
-	_announce("THE SUNKEN NAVE — the Gate will reopen", 4.0)
+	_announce("THE %s — the Gate will reopen" % String(cfg["name"]), 4.0)
 	sfx.call("play", "evolve")
+	if stage == 2:
+		_theme_nave()
+	elif stage == 3:
+		_theme_throne()
+	_restock_chests()
 	if gate_node and gate_node.has_meta("marker"):
 		var gmk := gate_node.get_meta("marker") as Label3D
 		if is_instance_valid(gmk):
 			gmk.text = "SANCTUM · sealed"
 			gmk.modulate = Color(0.6, 0.6, 0.7)
 		(gate_node.material_override as StandardMaterial3D).emission_energy_multiplier = 0.6
+func _stage_light(lname: String, color: Color, energy: float) -> OmniLight3D:
 	var ember := OmniLight3D.new()
-	ember.name = "EmberLight"
-	ember.light_color = Color(1.0, 0.35, 0.12)
-	ember.light_energy = 1.4
+	ember.name = lname
+	ember.light_color = color
+	ember.light_energy = energy
 	ember.omni_range = 40.0
 	ember.position = Vector3(0, 10, 0)
-	add_child(ember)
+	return ember
+
+func _theme_nave() -> void:
+	# Sunken Nave: ember dark, molten pools
+	add_child(_stage_light("EmberLight", Color(1.0, 0.35, 0.12), 1.4))
 	if has_meta("floor_mat"):
 		(get_meta("floor_mat") as StandardMaterial3D).emission = Color(0.7, 0.15, 0.05)
 	for lp in [Vector3(-10, 0, -6), Vector3(10, 0, -6), Vector3(0, 0, 8)]:
@@ -1188,6 +1228,14 @@ func _ascend_stage() -> void:
 		pool.position = lp + Vector3(0, 0.06, 0)
 		add_child(pool)
 		lavas.append({"pos": lp, "r": 2.2})
+
+func _theme_throne() -> void:
+	# Throne Approach: radiant pale dark + skyfire storms (see _storms)
+	add_child(_stage_light("ThroneLight", Color(1.0, 0.9, 0.7), 1.8))
+	if has_meta("floor_mat"):
+		(get_meta("floor_mat") as StandardMaterial3D).emission = Color(0.6, 0.55, 0.4)
+
+func _restock_chests() -> void:
 	for c in chests:
 		if not bool(c["opened"]):
 			continue
@@ -1205,8 +1253,46 @@ func _lava(dt: float) -> void:
 		if d < float(l["r"]) and player.global_position.y < 0.6:
 			_hurt_player(10.0 * dt)
 
+var storm_cd := 4.0
+
+func _storms(dt: float) -> void:
+	# stage-3 skyfire: gold telegraph ring, then a 25-dmg strike. Keep moving.
+	if stage != 3 or game_over:
+		return
+	for s in strikes:
+		s["t"] = float(s["t"]) - dt
+		if float(s["t"]) <= 0.0:
+			_damage_area(s["pos"], 3.0, 25.0, true)
+			sfx.call("play", "slam")
+			if is_instance_valid(s["node"] as Node):
+				(s["node"] as Node).queue_free()
+	var live: Array = []
+	for s in strikes:
+		if float(s["t"]) > 0.0:
+			live.append(s)
+	strikes = live
+	storm_cd -= dt
+	if storm_cd <= 0.0:
+		storm_cd = 5.0
+		var at := player.global_position
+		var ring := MeshInstance3D.new()
+		var tor := TorusMesh.new()
+		tor.inner_radius = 0.2
+		tor.outer_radius = 3.0
+		ring.mesh = tor
+		var m := StandardMaterial3D.new()
+		m.albedo_color = Color(1, 0.9, 0.5)
+		m.emission_enabled = true
+		m.emission = Color(1.0, 0.85, 0.3)
+		m.emission_energy_multiplier = 2.0
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		ring.material_override = m
+		ring.position = Vector3(at.x, 0.15, at.z)
+		add_child(ring)
+		strikes.append({"pos": Vector3(at.x, 0, at.z), "t": 1.2, "node": ring})
+
 func _gate(dt: float) -> void:
-	var unseal_at := 240.0 if stage == 2 else 300.0
+	var unseal_at := float((STAGES[stage] as Dictionary)["unseal"])
 	if stage_t >= unseal_at and gate_sealed:
 		gate_sealed = false
 		if gate_node:
@@ -1224,19 +1310,33 @@ func _gate(dt: float) -> void:
 			_spawn_warden(gp)
 
 func _spawn_warden(gp: Vector3) -> void:
+	var cfg: Dictionary = STAGES[stage]
 	var e := Node3D.new()
 	e.set_script(load("res://scripts/enemy.gd"))
 	add_child(e)
 	e.position = gp
-	e.call("setup", true, (1.0 + t / 120.0) * (1.6 if stage == 2 else 1.0))
+	e.call("setup", true, (1.0 + t / 120.0) * float(cfg["hpmult"]))
 	e.set("max_hp", float(e.get("max_hp")) * 8.0)
 	e.set("hp", float(e.get("max_hp")))
-	e.set("speed", 2.6 if stage == 2 else 2.0)
-	e.set("contact", 30.0 if stage == 2 else 25.0)
+	e.set("speed", float(cfg["speed"]))
+	e.set("contact", float(cfg["contact"]))
 	e.set("radius", 1.6)
 	enemies.append(e)
 	warden = e
-	_announce("THE NAVE TYRANT" if stage == 2 else "THE GATE WARDEN", 3.0)
+	_announce(String(cfg["boss"]), 3.0)
+
+func _throne_volley() -> void:
+	# radial bullet ring: slip between orbs or dash through with i-frames
+	var from: Vector3 = (warden as Node3D).global_position + Vector3(0, 1.6, 0)
+	for i in 10:
+		if eprojectiles.size() >= 60:
+			break
+		var p := Node3D.new()
+		p.set_script(load("res://scripts/projectile.gd"))
+		add_child(p)
+		var dir := Vector3(cos(TAU * i / 10.0), 0, sin(TAU * i / 10.0))
+		p.call("setup", from, dir, 10.0, 14.0, 5.0, true)
+		eprojectiles.append(p)
 
 func _tracers(dt: float) -> void:
 	var done: Array = []
@@ -1282,6 +1382,9 @@ func _warden_fight(dt: float) -> void:
 			if enemies.size() < 140:
 				_spawn_enemy(false, false, "chaser")
 		sfx.call("play", "boss")
+	elif stage == 3:
+		_throne_volley()
+		sfx.call("play", "slam")
 	else:
 		var ring := MeshInstance3D.new()
 		var tor := TorusMesh.new()
