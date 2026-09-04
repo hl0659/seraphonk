@@ -184,13 +184,13 @@ func _build_arena() -> void:
 		var pb := StaticBody3D.new()
 		var pc := CollisionShape3D.new()
 		var pbox := BoxShape3D.new()
-		pbox.size = Vector3(4.0, 0.4, 4.0)
+		pbox.size = Vector3(3.0, 0.4, 3.0)
 		pc.shape = pbox
 		pc.position.y = ph - 0.2
 		pb.add_child(pc)
 		var pm2 := MeshInstance3D.new()
 		var pmm := BoxMesh.new()
-		pmm.size = Vector3(4.0, 0.4, 4.0)
+		pmm.size = Vector3(3.0, 0.4, 3.0)
 		pm2.mesh = pmm
 		var pmat := StandardMaterial3D.new()
 		pmat.albedo_color = Color(0.35, 0.32, 0.45)
@@ -229,6 +229,7 @@ func _build_hud() -> void:
 	hud_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(hud_layer)
 	hud_label = Label.new()
+	hud_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud_label.add_theme_font_size_override("font_size", 16)
 	hud_label.position = Vector2(12, 10)
 	hud_layer.add_child(hud_label)
@@ -250,12 +251,14 @@ func _build_hud() -> void:
 	draft_center.add_child(draft_panel)
 	hud_layer.add_child(draft_center)
 	title_label = Label.new()
+	title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	title_label.add_theme_font_size_override("font_size", 15)
 	title_label.text = "WASD move · SHIFT dash · SPACE jump · CTRL slide/slam · aim with crosshair"
 	title_label.position = Vector2(12, 34)
 	hud_layer.add_child(title_label)
 	var objective := Label.new()
 	objective.name = "Objective"
+	objective.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	objective.add_theme_font_size_override("font_size", 17)
 	objective.set_anchors_preset(Control.PRESET_TOP_WIDE)
 	objective.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -270,6 +273,7 @@ func _build_hud() -> void:
 	hud_layer.add_child(cross)
 	var mouseln := Label.new()
 	mouseln.name = "MouseHint"
+	mouseln.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mouseln.add_theme_font_size_override("font_size", 18)
 	mouseln.text = "CLICK TO LOOK AROUND"
 	mouseln.set_anchors_preset(Control.PRESET_CENTER)
@@ -278,6 +282,14 @@ func _build_hud() -> void:
 	hud_layer.add_child(mouseln)
 
 func _unhandled_input(event: InputEvent) -> void:
+	# click-to-capture backup (primary path is _input below)
+	_try_capture(event)
+
+func _input(event: InputEvent) -> void:
+	# runs before GUI: clicks on labels can never block recapture
+	_try_capture(event)
+
+func _try_capture(event: InputEvent) -> void:
 	# click-to-capture: any lost pointer capture recovers with one click
 	if DisplayServer.get_name() == "headless":
 		return
@@ -344,6 +356,11 @@ func _process(dt: float) -> void:
 		return
 	if game_over or draft_open or get_tree().paused:
 		return
+	# FPS contract: while playing, the pointer belongs to the camera.
+	# (Pause/draft/end explicitly release it elsewhere.)
+	if DisplayServer.get_name() != "headless":
+		if Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and hud_layer.get_node_or_null("StartCenter") == null:
+			Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	if hitstop_t > 0.0:
 		hitstop_t -= dt
 		return
@@ -404,7 +421,7 @@ func _weapons(dt: float) -> void:
 			continue
 		if w["id"] == "chakram":
 			w["cd"] = maxf(0.35, 0.9 - w["lvl"] * 0.07)
-			_chakram_burst(int(w["lvl"]) + qty - 1, 3.2 + tomes["radius"] * 0.5, 10.0 + w["lvl"] * 4.0)
+			_chakram_burst(int(w["lvl"]) + qty - 1, 2.6 + tomes["radius"] * 0.4, 16.0 + w["lvl"] * 6.0)
 		elif w["id"] == "trumpet":
 			w["cd"] = maxf(0.3, 1.1 - w["lvl"] * 0.08)
 			_trumpet_volley(qty + int(w["lvl"]) / 2, 12.0 + w["lvl"] * 5.0)
@@ -423,14 +440,16 @@ func _nearest_enemy(max_d: float) -> Node3D:
 
 func _chakram_burst(count: int, radius: float, dmg: float) -> void:
 	for i in count:
-		var a := TAU * float(i) / float(count) + t * 2.0
+		var a := TAU * float(i) / float(maxi(1, count)) + t * 2.5
 		var hit_pos := player.global_position + Vector3(cos(a), 0, sin(a)) * radius
-		_damage_area(hit_pos, 1.6 + tomes["radius"] * 0.25, dmg, false)
+		_damage_area(hit_pos, 2.2 + tomes["radius"] * 0.25, dmg, false)
 
 func _trumpet_volley(count: int, dmg: float) -> void:
-	# FPS aim: crosshair ray — best target inside a narrow cone, else straight ahead
+	# FPS aim: crosshair cone first, else nearest enemy (guns never feel dead)
 	var aim: Vector3 = -cam.global_transform.basis.z
 	var target := _enemy_in_crosshair(0.985)
+	if target == null:
+		target = _nearest_enemy(40.0)
 	var base_dir: Vector3 = ((target.global_position + Vector3(0, 1.2, 0)) - (player.global_position + Vector3(0, 1.5, 0))).normalized() if target else aim
 	for i in count:
 		var p := Node3D.new()
@@ -517,7 +536,7 @@ func _enemies(dt: float) -> void:
 				en.global_position += to.normalized() * fspd * dt
 				en.global_position.y = clampf(en.global_position.y, 1.2, 6.0)
 			if fd < 1.5 and float(player.get("iframes_t")) <= 0.0:
-				player.set("hp", float(player.get("hp")) - float(en.get("contact")) * dt * 3.0)
+				player.set("hp", float(player.get("hp")) - float(en.get("contact")) * dt * 1.5)
 				if float(player.get("hp")) <= 0.0 and not game_over:
 					game_over = true
 					sfx.call("play", "die")
@@ -533,7 +552,7 @@ func _enemies(dt: float) -> void:
 		# contact damage with player i-frames respected
 		if d < 1.1 + float(en.get("radius")):
 			if float(player.get("iframes_t")) <= 0.0:
-				player.set("hp", float(player.get("hp")) - float(en.get("contact")) * dt * 3.0)
+				player.set("hp", float(player.get("hp")) - float(en.get("contact")) * dt * 1.5)
 				if float(player.get("hp")) <= 0.0 and not game_over:
 					game_over = true
 					sfx.call("play", "die")
@@ -711,7 +730,7 @@ func _spawn_warden(gp: Vector3) -> void:
 	e.call("setup", true, 1.0 + t / 120.0)
 	e.set("max_hp", float(e.get("max_hp")) * 8.0)
 	e.set("hp", float(e.get("max_hp")))
-	e.set("speed", 2.0)
+	e.set("speed", 3.0)
 	e.set("contact", 25.0)
 	e.set("radius", 1.6)
 	enemies.append(e)
@@ -759,7 +778,7 @@ func _hud() -> void:
 	var mins := int(t) / 60
 	var secs := int(t) % 60
 	hud_label.text = "HP %.0f | LV %d XP %.0f/%.0f | %02d:%02d / 10:00 | Kills %d | Gold %d | Enemies %d" % [
-		float(player.get("hp")), level, xp, xp_next, mins, secs, kills, gold, enemies.size()]
+		maxf(0.0, float(player.get("hp"))), level, xp, xp_next, mins, secs, kills, gold, enemies.size()]
 	var mh := hud_layer.get_node_or_null("MouseHint") as Label
 	if mh:
 		mh.visible = (Input.mouse_mode != Input.MOUSE_MODE_CAPTURED) and not get_tree().paused and not draft_open and not game_over

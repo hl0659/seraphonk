@@ -20,13 +20,13 @@ func setup(p_elite: bool, hp_scale: float, p_flying: bool = false) -> void:
 	if elite:
 		max_hp = 90.0 * hp_scale
 	hp = max_hp
-	speed = (2.4 if elite else 3.2 + randf() * 1.2) * (1.0 + hp_scale * 0.03)
+	speed = (3.4 if elite else 4.6 + randf() * 1.4) * (1.0 + hp_scale * 0.03)
 	radius = 1.1 if elite else 0.6
 	contact = 16.0 if elite else 8.0
 	if flying:
 		hp = 12.0 * hp_scale
 		max_hp = hp
-		speed = 4.5
+		speed = 5.5
 		radius = 0.45
 		contact = 6.0
 		base_y = 3.0

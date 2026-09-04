@@ -187,6 +187,9 @@ func _physics_process(dt: float) -> void:
 			velocity.y = -0.5
 	move_and_slide()
 	trauma = maxf(0.0, trauma - dt * 1.6)
+	# invisible sanctum walls: the arena is 40x30, the void beyond is death
+	global_position.x = clampf(global_position.x, -19.0, 19.0)
+	global_position.z = clampf(global_position.z, -14.0, 14.0)
 	# head bob + strafe tilt (no camera position fighting: offsets only)
 	var hspd := Vector2(velocity.x, velocity.z).length()
 	if is_on_floor() and hspd > 1.0:
