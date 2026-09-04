@@ -34,17 +34,30 @@ func _process(_dt: float) -> bool:
 				break
 	match frames:
 		10:
-			game.set("t", 70.0)
-			game.call("_spawn_enemy", false, false, "cantor")
+			game.set("t", 130.0)
+			game.call("_spawn_enemy", false, false, "brute")
 			var es: Array = game.get("enemies")
 			if es.size() > 0:
-				(es[es.size() - 1] as Node3D).global_position = player.global_position + Vector3(12, 0, 0)
+				(es[es.size() - 1] as Node3D).global_position = player.global_position + Vector3(6, 0, 0)
+			game.call("_spawn_enemy", false, false, "cantor")
+			var es2: Array = game.get("enemies")
+			if es2.size() > 0:
+				(es2[es2.size() - 1] as Node3D).global_position = player.global_position + Vector3(12, 0, 0)
 		700:
 			note("cantor_fires", seen_orbs)
+			var charged := false
+			for e in game.get("enemies"):
+				if String((e as Node).get("kind")) == "brute" and int((e as Node).get("charge_state")) > 0:
+					charged = true
+			note("brute_charges", charged)
 			game.set("t", 301.0)
 		800:
 			player.global_position = Vector3(0, 0.5, -13)
+		1050:
+			# deterministic style seed: real kill through the real damage path
+			game.call("_damage_area", player.global_position, 30.0, 999.0, false)
 		1100:
+			note("style_grows", float(game.get("style")) > 0.0)
 			note("warden_rings", (game.get("rings") as Array).size() > 0 or int(game.get("warden_phase")) > 0)
 			game.set("gold", 500)
 			player.global_position = Vector3(10, 0.5, 8)

@@ -7,8 +7,11 @@ var radius := 0.6
 var contact := 8.0
 var elite := false
 var flying := false
-var kind := "chaser"  # chaser | wisp(flying) | cantor(shooter)
+var kind := "chaser"  # chaser | wisp(flying) | cantor(shooter) | brute(charger)
 var fire_cd := 0.0
+var charge_state := 0  # 0 roam, 1 telegraph, 2 charge, 3 recover
+var charge_t := 0.0
+var charge_dir := Vector3.ZERO
 var base_y := 0.0
 var mesh: MeshInstance3D
 var mat: StandardMaterial3D
@@ -21,8 +24,8 @@ func setup(p_elite: bool, hp_scale: float, p_flying: bool = false, p_kind: Strin
 	kind = "chaser"
 	if flying:
 		kind = "wisp"
-	elif p_kind == "cantor" and not p_elite:
-		kind = "cantor"
+	elif p_kind in ["cantor", "brute"] and not p_elite:
+		kind = p_kind
 	var mult := 6.0 if elite else 1.0
 	max_hp = (90.0 if elite else 20.0) * hp_scale * mult / (6.0 if elite else 1.0)
 	if elite:
@@ -31,6 +34,27 @@ func setup(p_elite: bool, hp_scale: float, p_flying: bool = false, p_kind: Strin
 	speed = (3.4 if elite else 4.6 + randf() * 1.4) * (1.0 + hp_scale * 0.03)
 	radius = 1.1 if elite else 0.6
 	contact = 16.0 if elite else 8.0
+	if kind == "brute":
+		hp = 45.0 * hp_scale
+		max_hp = hp
+		speed = 3.0
+		radius = 0.9
+		contact = 14.0
+		mesh = MeshInstance3D.new()
+		var bm := SphereMesh.new()
+		bm.radius = radius
+		bm.height = radius * 2.2
+		mesh.mesh = bm
+		mesh.scale = Vector3(1.25, 1.0, 1.0)
+		mat = StandardMaterial3D.new()
+		mat.albedo_color = Color(0.4, 0.06, 0.05)
+		mat.emission_enabled = true
+		mat.emission = Color(1.0, 0.3, 0.08)
+		mat.emission_energy_multiplier = 1.0
+		mesh.material_override = mat
+		mesh.position.y = radius * 1.1
+		add_child(mesh)
+		return
 	if kind == "cantor":
 		hp = 15.0 * hp_scale
 		max_hp = hp
@@ -148,9 +172,15 @@ func damage(amount: float, from: Vector3) -> void:
 
 func _process(dt: float) -> void:
 	touch_cd = maxf(0.0, touch_cd - dt)
+	if charge_state == 1:
+		# telegraph strobe: GET OFF THE LINE
+		mat.emission_energy_multiplier = 2.5 + sin(Time.get_ticks_msec() / 60.0) * 1.5
+		return
 	if flash > 0.0:
 		flash = maxf(0.0, flash - dt * 6.0)
 		mat.emission_energy_multiplier = 0.7 + flash * 3.0
+	elif kind == "brute" and charge_state != 1:
+		mat.emission_energy_multiplier = 1.0
 	if flying:
 		# hover + bob; game.gd steers XZ and dive
 		mesh.position.y = base_y + sin(Time.get_ticks_msec() / 280.0 + float(get_instance_id() % 10)) * 0.4

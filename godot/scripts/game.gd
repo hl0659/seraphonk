@@ -55,6 +55,8 @@ var dmg_flash := 0.0
 var vignette: ColorRect
 var sens_mult := 1.0
 var shake_mult := 1.0
+var style := 0.0
+var style_label: Label
 var meta := {"runs": 0, "victories": 0, "kills": 0}
 
 func _load_settings() -> void:
@@ -199,6 +201,27 @@ func _start_game() -> void:
 	if DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
+func _style_rank() -> Array:
+	# [letter, color] — Ultrakill-style aggression meter, cosmetic
+	if style >= 3.5: return ["SSS", Color(1.0, 0.3, 0.2)]
+	if style >= 2.5: return ["SS", Color(1.0, 0.45, 0.15)]
+	if style >= 1.8: return ["S", Color(1.0, 0.75, 0.2)]
+	if style >= 1.2: return ["A", Color(0.5, 0.9, 1.0)]
+	if style >= 0.7: return ["B", Color(0.5, 1.0, 0.6)]
+	if style >= 0.3: return ["C", Color(0.7, 0.7, 0.8)]
+	return ["D", Color(0.45, 0.45, 0.5)]
+
+func _marker(text: String, pos: Vector3, color: Color) -> Label3D:
+	var l := Label3D.new()
+	l.text = text
+	l.font_size = 96
+	l.modulate = color
+	l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	l.no_depth_test = true
+	l.position = pos
+	add_child(l)
+	return l
+
 func _build_arena() -> void:
 	var floor_body := StaticBody3D.new()
 	floor_body.name = "FloorBody"
@@ -300,6 +323,7 @@ func _build_arena() -> void:
 	gate_node.material_override = gm
 	gate_node.position = gate_pos
 	add_child(gate_node)
+	(gate_node as MeshInstance3D).set_meta("marker", _marker("SANCTUM · sealed", gate_pos + Vector3(0, 3.5, 0), Color(0.6, 0.6, 0.7)))
 
 func _build_hud() -> void:
 	hud_layer = CanvasLayer.new()
@@ -363,6 +387,12 @@ func _build_hud() -> void:
 	vignette.color = Color(0.7, 0.05, 0.1, 0.0)
 	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hud_layer.add_child(vignette)
+	style_label = Label.new()
+	style_label.add_theme_font_size_override("font_size", 44)
+	style_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	style_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	style_label.position = Vector2(-140, 40)
+	hud_layer.add_child(style_label)
 
 func _unhandled_input(event: InputEvent) -> void:
 	# click-to-capture backup (primary path is _input below)
@@ -409,7 +439,8 @@ func _build_shrines_chests() -> void:
 		ring.material_override = m
 		ring.position = shrine_spots[i] + Vector3(0, 0.15, 0)
 		add_child(ring)
-		shrines.append({"pos": shrine_spots[i], "r": 2.5, "progress": 0.0, "done": false, "node": ring})
+		shrines.append({"pos": shrine_spots[i], "r": 2.5, "progress": 0.0, "done": false, "node": ring,
+			"marker": _marker("BLESS", shrine_spots[i] + Vector3(0, 3.0, 0), Color(0.4, 0.7, 1.0))})
 	var chest_spots := [Vector3(-8, 0, -11), Vector3(8, 0, -11), Vector3(0, 0, 12)]
 	for i in chest_spots.size():
 		var box := MeshInstance3D.new()
@@ -424,7 +455,8 @@ func _build_shrines_chests() -> void:
 		box.material_override = cm
 		box.position = chest_spots[i] + Vector3(0, 0.4, 0)
 		add_child(box)
-		chests.append({"pos": chest_spots[i], "cost": 20 + i * 10, "opened": false, "node": box})
+		chests.append({"pos": chest_spots[i], "cost": 20 + i * 10, "opened": false, "node": box,
+			"marker": _marker("CACHE", chest_spots[i] + Vector3(0, 2.2, 0), Color(1.0, 0.8, 0.3))})
 	# Tithe vendor: golden pillar, touch to buy blessings (escalating)
 	var vend := MeshInstance3D.new()
 	var vm := CylinderMesh.new()
@@ -440,6 +472,7 @@ func _build_shrines_chests() -> void:
 	vend.material_override = vmat
 	vend.position = Vector3(10, 1.5, 8)
 	add_child(vend)
+	_marker("TITHE · blessings for gold", Vector3(10, 4.2, 8), Color(1.0, 0.85, 0.4))
 
 func _process(dt: float) -> void:
 	if Input.is_action_just_pressed("ui_cancel"):
@@ -475,7 +508,7 @@ func _process(dt: float) -> void:
 	_warden_fight(dt)
 	_rings(dt)
 	_juice(dt)
-	_hud()
+	_hud(dt)
 	# dash whoosh edge
 	var dnow: float = float(player.get("dash_t"))
 	if dnow > 0.0 and prev_dash <= 0.0:
@@ -503,7 +536,9 @@ func _director(dt: float) -> void:
 				_spawn_enemy(false, false)
 
 func _cantor_ok() -> String:
-	# cantors (ranged pressure) join after the first minute
+	# cantors (ranged pressure) join after the first minute, brutes after two
+	if t > 120.0 and randf() < 0.18:
+		return "brute"
 	if t > 60.0 and randf() < 0.3:
 		return "cantor"
 	return "chaser"
@@ -612,6 +647,7 @@ func _damage_area(center: Vector3, radius: float, dmg: float, heavy: bool) -> vo
 func _kill_enemy(e: Node3D, heavy: bool) -> void:
 	enemies.erase(e)
 	kills += 1
+	style = minf(4.5, style + (0.3 if heavy or bool(e.get("elite")) else 0.12))
 	sfx.call("play", "die")
 	var pos: Vector3 = (e as Node3D).global_position
 	var elite: bool = bool(e.get("elite"))
@@ -646,6 +682,9 @@ func _enemies(dt: float) -> void:
 			continue
 		if String(en.get("kind")) == "cantor":
 			_cantor_steer(en, dt, pp)
+			continue
+		if String(en.get("kind")) == "brute":
+			_brute_steer(en, dt, pp)
 			continue
 		var to_p: Vector3 = pp - en.global_position
 		to_p.y = 0.0
@@ -692,6 +731,41 @@ func _cantor_steer(en: Node3D, dt: float, pp: Vector3) -> void:
 			p.call("setup", from, dir, 14.0, 12.0, 4.0, true)
 			eprojectiles.append(p)
 
+func _brute_steer(en: Node3D, dt: float, pp: Vector3) -> void:
+	# telegraphed charge: roam -> flash 0.7s -> 16 m/s line -> recover. Dash the line.
+	var st := int(en.get("charge_state"))
+	var flat: Vector3 = pp - en.global_position
+	flat.y = 0.0
+	var d := flat.length()
+	if st == 0:
+		var spd: float = float(en.get("speed"))
+		if d > 0.1:
+			en.global_position += flat.normalized() * spd * dt
+		if d < 9.0:
+			en.set("charge_state", 1)
+			en.set("charge_t", 0.7)
+	elif st == 1:
+		en.set("charge_t", float(en.get("charge_t")) - dt)
+		if d > 0.1:
+			en.set("charge_dir", flat.normalized())
+		if float(en.get("charge_t")) <= 0.0:
+			en.set("charge_state", 2)
+			en.set("charge_t", 0.8)
+	elif st == 2:
+		en.global_position += (en.get("charge_dir") as Vector3) * 16.0 * dt
+		en.global_position.y = 0.0
+		en.set("charge_t", float(en.get("charge_t")) - dt)
+		if float(en.get("charge_t")) <= 0.0:
+			en.set("charge_state", 3)
+			en.set("charge_t", 1.2)
+	else:
+		en.set("charge_t", float(en.get("charge_t")) - dt)
+		if float(en.get("charge_t")) <= 0.0:
+			en.set("charge_state", 0)
+	if d < 1.2 + float(en.get("radius")) and float(en.get("touch_cd")) <= 0.0:
+		en.set("touch_cd", 0.55 + randf() * 0.2)
+		_hurt_player(float(en.get("contact")) * 0.5)
+
 func _hurt_player(amount: float) -> void:
 	if float(player.get("iframes_t")) > 0.0:
 		return
@@ -699,6 +773,7 @@ func _hurt_player(amount: float) -> void:
 	var grace := 0.5 + 0.5 * minf(1.0, t / 90.0)
 	player.set("hp", float(player.get("hp")) - amount * grace)
 	dmg_flash = minf(1.0, dmg_flash + 0.45)
+	style = maxf(0.0, style - 0.4)
 	if float(player.get("hp")) <= 0.0 and not game_over:
 		game_over = true
 		sfx.call("play", "die")
@@ -886,6 +961,8 @@ func _shrines(dt: float) -> void:
 			if float(s["progress"]) >= 3.0:
 				s["done"] = true
 				(s["node"] as MeshInstance3D).visible = false
+				if s.has("marker") and is_instance_valid(s["marker"] as Node):
+					(s["marker"] as Node).queue_free()
 				player.set("hp", minf(float(player.get("max_hp")), float(player.get("hp")) + 30.0))
 				tomes["zeal"] = int(tomes["zeal"]) + 1
 				sfx.call("play", "shrine")
@@ -903,6 +980,8 @@ func _chests() -> void:
 			gold -= int(c["cost"])
 			c["opened"] = true
 			(c["node"] as MeshInstance3D).visible = false
+			if c.has("marker") and is_instance_valid(c["marker"] as Node):
+				(c["marker"] as Node).queue_free()
 			chest_count += 1
 			var roll := randi() % 3
 			if roll == 0 and weapons.size() < 4:
@@ -922,6 +1001,11 @@ func _gate(dt: float) -> void:
 		gate_sealed = false
 		if gate_node:
 			(gate_node.material_override as StandardMaterial3D).emission_energy_multiplier = 2.5
+			if gate_node.has_meta("marker"):
+				var mk := gate_node.get_meta("marker") as Label3D
+				if is_instance_valid(mk):
+					mk.text = "SANCTUM · OPEN"
+					mk.modulate = Color(1.0, 0.85, 0.3)
 		sfx.call("play", "boss")
 	if not gate_sealed and not warden_spawned:
 		var gp := Vector3(0, 0, -ARENA.y * 0.5 + 2.0)
@@ -1051,11 +1135,15 @@ func _juice(dt: float) -> void:
 		player.set("trauma", minf(1.0, float(player.get("trauma")) + 0.55))
 		hitstop_t = 0.045
 
-func _hud() -> void:
+func _hud(dt: float) -> void:
 	var mins := int(t) / 60
 	var secs := int(t) % 60
 	hud_label.text = "HP %.0f | LV %d XP %.0f/%.0f | %02d:%02d / 10:00 | Kills %d | Gold %d | Enemies %d" % [
 		maxf(0.0, float(player.get("hp"))), level, xp, xp_next, mins, secs, kills, gold, enemies.size()]
+	style = maxf(0.0, style - dt * 0.05)
+	var rank := _style_rank()
+	style_label.text = rank[0]
+	style_label.add_theme_color_override("font_color", rank[1])
 	var mh := hud_layer.get_node_or_null("MouseHint") as Label
 	if mh:
 		mh.visible = (Input.mouse_mode != Input.MOUSE_MODE_CAPTURED) and not get_tree().paused and not draft_open and not game_over
