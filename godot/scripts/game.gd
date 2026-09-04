@@ -9,7 +9,7 @@ const ARENA := Vector2(40.0, 30.0)
 
 var player: CharacterBody3D
 var cam: Camera3D
-var cam_base_fov := 70.0
+var cam_base_fov := 75.0
 var trauma := 0.0
 var hitstop_t := 0.0
 var t := 0.0
@@ -69,7 +69,45 @@ func _ready() -> void:
 	_build_hud()
 	_build_shrines_chests()
 	weapons.append({"id": "chakram", "lvl": 1, "cd": 0.0})
+	_show_start()
 	set_process(true)
+
+func _show_start() -> void:
+	# start overlay: goal + controls + Start (captures mouse). Skipped headless.
+	if DisplayServer.get_name() == "headless":
+		return
+	get_tree().paused = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	var panel := PanelContainer.new()
+	panel.name = "StartPanel"
+	panel.set_anchors_preset(Control.PRESET_CENTER)
+	var vb := VBoxContainer.new()
+	panel.add_child(vb)
+	var t := Label.new()
+	t.add_theme_font_size_override("font_size", 34)
+	t.text = "SERAPHONK"
+	vb.add_child(t)
+	var g := Label.new()
+	g.add_theme_font_size_override("font_size", 16)
+	g.text = "You are a seraph. The fallen swarm.\nSurvive, gather grace, choose blessings.\nAt 5:00 the Gate unseals — enter it and slay the Warden.\nAt 10:00 the Wrath comes for the slow."
+	g.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(g)
+	var c := Label.new()
+	c.add_theme_font_size_override("font_size", 16)
+	c.text = "WASD move (W = sprint) · MOUSE look · SHIFT dash (invincible) · SPACE jump (mid-dash = dash-jump) · CTRL slide, CTRL in air = slam · ESC pause · R restart"
+	c.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(c)
+	var b := Button.new()
+	b.text = "ASCEND"
+	b.pressed.connect(_start_game.bind(panel))
+	vb.add_child(b)
+	hud_layer.add_child(panel)
+
+func _start_game(panel: PanelContainer) -> void:
+	panel.queue_free()
+	get_tree().paused = false
+	if DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _build_arena() -> void:
 	var floor_body := StaticBody3D.new()
@@ -125,6 +163,32 @@ func _build_arena() -> void:
 			sb.add_child(mi)
 		sb.position = Vector3(p.x, 0, p.z)
 		add_child(sb)
+	# jumpable choir platforms (slam-from-above plays, escape routes)
+	var plat_spots := [[Vector3(-6, 0, 4), 1.0], [Vector3(6, 0, -4), 1.0], [Vector3(0, 0, -9), 1.9]]
+	for ps in plat_spots:
+		var ppos: Vector3 = ps[0]
+		var ph: float = ps[1]
+		var pb := StaticBody3D.new()
+		var pc := CollisionShape3D.new()
+		var pbox := BoxShape3D.new()
+		pbox.size = Vector3(4.0, 0.4, 4.0)
+		pc.shape = pbox
+		pc.position.y = ph - 0.2
+		pb.add_child(pc)
+		var pm2 := MeshInstance3D.new()
+		var pmm := BoxMesh.new()
+		pmm.size = Vector3(4.0, 0.4, 4.0)
+		pm2.mesh = pmm
+		var pmat := StandardMaterial3D.new()
+		pmat.albedo_color = Color(0.35, 0.32, 0.45)
+		pmat.emission_enabled = true
+		pmat.emission = Color(0.45, 0.4, 0.8)
+		pmat.emission_energy_multiplier = 0.5
+		pm2.material_override = pmat
+		pm2.position.y = ph - 0.2
+		pb.add_child(pm2)
+		pb.position = Vector3(ppos.x, 0, ppos.z)
+		add_child(pb)
 	# Sanctum Gate (boss portal) at north edge
 	var gate_pos := Vector3(0, 2.5, -ARENA.y * 0.5 + 2.0)
 	var gate_model := _try_model("res://assets/models/gate.glb")
@@ -162,10 +226,23 @@ func _build_hud() -> void:
 	draft_panel.set_anchors_preset(Control.PRESET_CENTER)
 	hud_layer.add_child(draft_panel)
 	title_label = Label.new()
-	title_label.add_theme_font_size_override("font_size", 20)
-	title_label.text = "SERAPHONK — WASD move · SHIFT dash · SPACE jump · CTRL slide (air = slam) · ESC pause · R restart"
+	title_label.add_theme_font_size_override("font_size", 15)
+	title_label.text = "WASD move · SHIFT dash · SPACE jump · CTRL slide/slam · aim with crosshair"
 	title_label.position = Vector2(12, 34)
 	hud_layer.add_child(title_label)
+	var objective := Label.new()
+	objective.name = "Objective"
+	objective.add_theme_font_size_override("font_size", 17)
+	objective.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	objective.position = Vector2(-260, 10)
+	hud_layer.add_child(objective)
+	var cross := ColorRect.new()
+	cross.name = "Crosshair"
+	cross.color = Color(1, 0.95, 0.8)
+	cross.set_anchors_preset(Control.PRESET_CENTER)
+	cross.position = Vector2(-2, -2)
+	cross.size = Vector2(4, 4)
+	hud_layer.add_child(cross)
 	pause_label = Label.new()
 	pause_label.add_theme_font_size_override("font_size", 42)
 	pause_label.text = "PAUSED — ESC resume · R restart"
@@ -212,6 +289,8 @@ func _process(dt: float) -> void:
 	if Input.is_action_just_pressed("ui_cancel"):
 		get_tree().paused = not get_tree().paused
 		pause_label.visible = get_tree().paused
+		if DisplayServer.get_name() != "headless":
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if get_tree().paused else Input.MOUSE_MODE_CAPTURED
 		return
 	if Input.is_key_pressed(KEY_R):
 		get_tree().paused = false
@@ -223,8 +302,6 @@ func _process(dt: float) -> void:
 		hitstop_t -= dt
 		return
 	t += dt
-	if title_label and t > 12.0:
-		title_label.visible = false
 	_director(dt)
 	_weapons(dt)
 	_enemies(dt)
@@ -253,14 +330,14 @@ func _director(dt: float) -> void:
 		_spawn_enemy(true)
 	while spawn_acc >= 1.0 and alive < want:
 		spawn_acc -= 1.0
-		_spawn_enemy(false)
+		_spawn_enemy(false, randf() < 0.3)
 		alive += 1
 	if t >= RUN_LEN and not victory:
 		# Wrath swarm: flood + end pressure
 		for i in 12:
-			_spawn_enemy(false)
+			_spawn_enemy(false, false)
 
-func _spawn_enemy(elite: bool) -> void:
+func _spawn_enemy(elite: bool, flying: bool = false) -> void:
 	var e := Node3D.new()
 	e.set_script(load("res://scripts/enemy.gd"))
 	var ang := randf() * TAU
@@ -269,7 +346,7 @@ func _spawn_enemy(elite: bool) -> void:
 	e.position = Vector3(clampf(pp.x + cos(ang) * r, -ARENA.x * 0.5 + 1.0, ARENA.x * 0.5 - 1.0), 0, clampf(pp.z + sin(ang) * r, -ARENA.y * 0.5 + 1.0, ARENA.y * 0.5 - 1.0))
 	add_child(e)
 	var hp_scale := 1.0 + t / 120.0
-	e.call("setup", elite, hp_scale)
+	e.call("setup", elite, hp_scale, flying)
 	enemies.append(e)
 
 func _weapons(dt: float) -> void:
@@ -305,19 +382,38 @@ func _chakram_burst(count: int, radius: float, dmg: float) -> void:
 		_damage_area(hit_pos, 1.6 + tomes["radius"] * 0.25, dmg, false)
 
 func _trumpet_volley(count: int, dmg: float) -> void:
-	var target := _nearest_enemy(26.0)
-	if target == null:
-		return
+	# FPS aim: crosshair ray — best target inside a narrow cone, else straight ahead
+	var aim: Vector3 = -cam.global_transform.basis.z
+	var target := _enemy_in_crosshair(0.985)
+	var base_dir: Vector3 = ((target.global_position + Vector3(0, 1.2, 0)) - (player.global_position + Vector3(0, 1.5, 0))).normalized() if target else aim
 	for i in count:
 		var p := Node3D.new()
 		p.set_script(load("res://scripts/projectile.gd"))
 		add_child(p)
-		var dir: Vector3 = (target.global_position - player.global_position).normalized()
-		var spread := (float(i) - float(count - 1) * 0.5) * 0.12
-		dir = dir.rotated(Vector3.UP, spread)
-		p.call("setup", player.global_position + Vector3(0, 1.2, 0), dir, 22.0, dmg, 3.0)
+		var dir: Vector3 = base_dir.rotated(Vector3.UP, (float(i) - float(count - 1) * 0.5) * 0.1)
+		p.call("setup", player.global_position + Vector3(0, 1.5, 0), dir, 26.0, dmg, 2.5)
 		projectiles.append(p)
 	sfx.call("play", "shoot")
+
+func _enemy_in_crosshair(min_dot: float) -> Node3D:
+	var aim: Vector3 = -cam.global_transform.basis.z
+	var from: Vector3 = player.global_position + Vector3(0, 1.5, 0)
+	var best: Node3D = null
+	var best_d := 30.0
+	for e in enemies:
+		if not is_instance_valid(e):
+			continue
+		var en := e as Node3D
+		var to: Vector3 = (en.global_position + Vector3(0, 1.2, 0)) - from
+		var d := to.length()
+		if d > 30.0 or d < 0.5:
+			continue
+		if to.normalized().dot(aim) < min_dot:
+			continue
+		if d < best_d:
+			best_d = d
+			best = en
+	return best
 
 func _damage_area(center: Vector3, radius: float, dmg: float, heavy: bool) -> void:
 	var killed: Array = []
@@ -344,8 +440,7 @@ func _kill_enemy(e: Node3D, heavy: bool) -> void:
 	trauma = minf(1.0, trauma + (0.25 if heavy or elite else 0.08))
 	if heavy or elite:
 		hitstop_t = 0.06
-		if cam:
-			cam.fov = cam_base_fov + 4.0
+		player.set("trauma", minf(1.0, float(player.get("trauma")) + 0.3))
 	if e == warden:
 		warden = null
 		victory = true
@@ -367,6 +462,21 @@ func _enemies(dt: float) -> void:
 		if not is_instance_valid(e):
 			continue
 		var en := e as Node3D
+		if bool(en.get("flying")):
+			var anchor: Vector3 = pp + Vector3(0, 1.4, 0)
+			var to: Vector3 = anchor - en.global_position
+			var fd := to.length()
+			if fd > 0.1:
+				var fspd: float = float(en.get("speed"))
+				en.global_position += to.normalized() * fspd * dt
+				en.global_position.y = clampf(en.global_position.y, 1.2, 6.0)
+			if fd < 1.5 and float(player.get("iframes_t")) <= 0.0:
+				player.set("hp", float(player.get("hp")) - float(en.get("contact")) * dt * 3.0)
+				if float(player.get("hp")) <= 0.0 and not game_over:
+					game_over = true
+					sfx.call("play", "die")
+					_show_end(false)
+			continue
 		var to_p: Vector3 = pp - en.global_position
 		to_p.y = 0.0
 		var d := to_p.length()
@@ -440,6 +550,8 @@ func _open_draft() -> void:
 	sfx.call("play", "levelup")
 	draft_open = true
 	get_tree().paused = true
+	if DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	var vb: VBoxContainer = draft_panel.get_node("Choices")
 	for c in vb.get_children():
 		c.queue_free()
@@ -484,6 +596,8 @@ func _pick_draft(o: Dictionary) -> void:
 	draft_panel.visible = false
 	draft_open = false
 	get_tree().paused = false
+	if DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 func _shrines(dt: float) -> void:
 	var pp := player.global_position
@@ -577,17 +691,18 @@ func _free_damage_number(l: Label3D) -> void:
 
 func _juice(dt: float) -> void:
 	trauma = maxf(0.0, trauma - dt * 1.8)
+	# player owns FOV; game only adds positional shake here
 	if cam:
 		var sh := trauma * trauma * 0.6
 		cam.h_offset = randf_range(-sh, sh)
 		cam.v_offset = randf_range(-sh, sh)
-		cam.fov = lerpf(cam.fov, cam_base_fov + (4.0 if trauma > 0.4 else 0.0), dt * 8.0)
 	# slam AoE hook from player
 	if player.get("just_slammed"):
 		player.set("just_slammed", false)
 		_damage_area(player.global_position, 3.0 + tomes["radius"] * 0.4, 30.0, true)
 		sfx.call("play", "slam")
 		trauma = minf(1.0, trauma + 0.55)
+		player.set("trauma", minf(1.0, float(player.get("trauma")) + 0.55))
 		hitstop_t = 0.045
 
 func _hud() -> void:
@@ -595,6 +710,15 @@ func _hud() -> void:
 	var secs := int(t) % 60
 	hud_label.text = "HP %.0f | LV %d XP %.0f/%.0f | %02d:%02d / 10:00 | Kills %d | Gold %d | Enemies %d" % [
 		float(player.get("hp")), level, xp, xp_next, mins, secs, kills, gold, enemies.size()]
+	var obj := hud_layer.get_node_or_null("Objective") as Label
+	if obj:
+		if warden_spawned and warden != null:
+			obj.text = "SLAY THE WARDEN"
+		elif not gate_sealed:
+			obj.text = "THE GATE IS OPEN — enter the golden ring (north)"
+		else:
+			var left := int(300.0 - t)
+			obj.text = "Survive · gather grace · Gate opens in %d:%02d" % [left / 60, left % 60]
 
 func _show_end(won: bool) -> void:
 	var l := Label.new()

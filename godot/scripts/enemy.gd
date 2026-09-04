@@ -6,12 +6,15 @@ var speed := 3.2
 var radius := 0.6
 var contact := 8.0
 var elite := false
+var flying := false
+var base_y := 0.0
 var mesh: MeshInstance3D
 var mat: StandardMaterial3D
 var flash := 0.0
 
-func setup(p_elite: bool, hp_scale: float) -> void:
+func setup(p_elite: bool, hp_scale: float, p_flying: bool = false) -> void:
 	elite = p_elite
+	flying = p_flying and not p_elite
 	var mult := 6.0 if elite else 1.0
 	max_hp = (90.0 if elite else 20.0) * hp_scale * mult / (6.0 if elite else 1.0)
 	if elite:
@@ -20,6 +23,27 @@ func setup(p_elite: bool, hp_scale: float) -> void:
 	speed = (2.4 if elite else 3.2 + randf() * 1.2) * (1.0 + hp_scale * 0.03)
 	radius = 1.1 if elite else 0.6
 	contact = 16.0 if elite else 8.0
+	if flying:
+		hp = 12.0 * hp_scale
+		max_hp = hp
+		speed = 4.5
+		radius = 0.45
+		contact = 6.0
+		base_y = 3.0
+		mesh = MeshInstance3D.new()
+		var wm := SphereMesh.new()
+		wm.radius = radius
+		wm.height = radius * 2.0
+		mesh.mesh = wm
+		mat = StandardMaterial3D.new()
+		mat.albedo_color = Color(0.6, 0.9, 1.0)
+		mat.emission_enabled = true
+		mat.emission = Color(0.4, 0.8, 1.0)
+		mat.emission_energy_multiplier = 2.0
+		mesh.material_override = mat
+		mesh.position.y = base_y
+		add_child(mesh)
+		return
 	if ResourceLoader.exists("res://assets/models/fallen.glb"):
 		var ps := load("res://assets/models/fallen.glb") as PackedScene
 		if ps:
@@ -96,6 +120,11 @@ func _process(dt: float) -> void:
 	if flash > 0.0:
 		flash = maxf(0.0, flash - dt * 6.0)
 		mat.emission_energy_multiplier = 0.7 + flash * 3.0
+	if flying:
+		# hover + bob; game.gd steers XZ and dive
+		mesh.position.y = base_y + sin(Time.get_ticks_msec() / 280.0 + float(get_instance_id() % 10)) * 0.4
+		mesh.rotation.y += dt * 3.0
+		return
 	# hover bob
 	if mesh:
 		mesh.position.y = radius * 1.5 + sin(Time.get_ticks_msec() / 300.0 + float(get_instance_id() % 10)) * 0.15

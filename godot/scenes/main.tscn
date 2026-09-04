@@ -30,9 +30,9 @@ position = Vector3(0, 1, 6)
 script = ExtResource("2")
 
 [node name="Cam" type="Camera3D" parent="Player"]
-transform = Transform3D(1, 0, 0, 0, 0.7, 0.7, 0, -0.7, 0.7, 0, 9, 9)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.62, 0)
 current = true
-fov = 70.0
+fov = 75.0
 
 [node name="Director" type="Node3D" parent="."]
 script = ExtResource("3")
