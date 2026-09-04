@@ -263,10 +263,30 @@ func _build_hud() -> void:
 	var cross := ColorRect.new()
 	cross.name = "Crosshair"
 	cross.color = Color(1, 0.95, 0.8)
+	cross.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cross.set_anchors_preset(Control.PRESET_CENTER)
 	cross.position = Vector2(-2, -2)
 	cross.size = Vector2(4, 4)
 	hud_layer.add_child(cross)
+	var mouseln := Label.new()
+	mouseln.name = "MouseHint"
+	mouseln.add_theme_font_size_override("font_size", 18)
+	mouseln.text = "CLICK TO LOOK AROUND"
+	mouseln.set_anchors_preset(Control.PRESET_CENTER)
+	mouseln.position = Vector2(-110, 40)
+	mouseln.visible = false
+	hud_layer.add_child(mouseln)
+
+func _unhandled_input(event: InputEvent) -> void:
+	# click-to-capture: any lost pointer capture recovers with one click
+	if DisplayServer.get_name() == "headless":
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED:
+			if not get_tree().paused and not draft_open and not game_over:
+				if hud_layer.get_node_or_null("StartCenter") == null:
+					Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	pause_label = Label.new()
 	pause_label.add_theme_font_size_override("font_size", 42)
 	pause_label.text = "PAUSED — ESC resume · R restart"
@@ -740,6 +760,9 @@ func _hud() -> void:
 	var secs := int(t) % 60
 	hud_label.text = "HP %.0f | LV %d XP %.0f/%.0f | %02d:%02d / 10:00 | Kills %d | Gold %d | Enemies %d" % [
 		float(player.get("hp")), level, xp, xp_next, mins, secs, kills, gold, enemies.size()]
+	var mh := hud_layer.get_node_or_null("MouseHint") as Label
+	if mh:
+		mh.visible = (Input.mouse_mode != Input.MOUSE_MODE_CAPTURED) and not get_tree().paused and not draft_open and not game_over
 	var obj := hud_layer.get_node_or_null("Objective") as Label
 	if obj:
 		if warden_spawned and warden != null:

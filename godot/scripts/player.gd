@@ -74,7 +74,8 @@ func _build_viewmodel() -> void:
 	ring.material_override = hm
 	viewmodel.add_child(ring)
 
-func _unhandled_input(event: InputEvent) -> void:
+func _input(event: InputEvent) -> void:
+	# _input (not _unhandled_input): GUI overlays can never swallow mouse motion.
 	if headless:
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
@@ -190,6 +191,15 @@ func _physics_process(dt: float) -> void:
 	var hspd := Vector2(velocity.x, velocity.z).length()
 	if is_on_floor() and hspd > 1.0:
 		bob_t += dt * hspd * 1.4
+	# arrow-key look fallback: looking must always be possible, even if
+	# the OS/window ever refuses pointer capture
+	var turn := Input.get_axis("ui_left", "ui_right")
+	var tilt := Input.get_axis("ui_up", "ui_down")
+	if turn != 0.0 or tilt != 0.0:
+		yaw -= turn * 2.4 * dt
+		pitch = clampf(pitch - tilt * 1.8 * dt, PITCH_MIN, PITCH_MAX)
+		rotation.y = yaw
+		cam.rotation.x = pitch
 	cam.position = Vector3(0, 1.62 + sin(bob_t) * 0.045, 0)
 	cam.rotation.z = lerpf(cam.rotation.z, -strafe_in * 0.025, dt * 8.0)
 	# FOV: base 75, +dash kick, +trauma swell
