@@ -59,6 +59,8 @@ func budget(tt: float) -> float:
 	return 4.0 + 6.0 * m + 2.5 * m * m
 
 func _ready() -> void:
+	# UI + manager must run while paused (start/draft/pause menus)
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	player = $Player
 	cam = $Player/Cam
 	cam_base_fov = cam.fov
@@ -224,6 +226,7 @@ func _build_arena() -> void:
 
 func _build_hud() -> void:
 	hud_layer = CanvasLayer.new()
+	hud_layer.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(hud_layer)
 	hud_label = Label.new()
 	hud_label.add_theme_font_size_override("font_size", 16)
