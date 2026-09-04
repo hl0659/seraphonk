@@ -7,3 +7,6 @@ dist/
 assets/sprites/*.png
 !assets/sprites/.gitkeep
 *.blend1
+# Godot (exe >100MB GitHub limit ships via releases/CI, not git)
+godot/build/
+godot/.godot/

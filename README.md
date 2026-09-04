@@ -1,7 +1,14 @@
 # SERAPHONK — Angelic Movement Survivors-like
 Custom engine + headless-Blender pipeline. Megabonk loop x Ultrakill movement.
 
-## Quickstart (Windows PowerShell 5.1)
+## Play (Godot 3D — main game)
+```powershell
+godot --path godot          # F5 in editor, or:
+.\godot\build\Seraphonk.exe # 109MB Windows build (needs RTX-class Vulkan; Forward+)
+```
+Controls: WASD move · SHIFT dash (i-frames) · SPACE jump (dash-jump = 2 stamina) · CTRL slide (air = slam AoE) · ESC pause · R restart. Survive, draft blessings each level, channel shrines, open chests, enter the Gate after 5:00 to face the Warden. 10:00 Wrath ends slow runs.
+
+## Quickstart (Python 2D prototype — design reference)
 ```powershell
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt

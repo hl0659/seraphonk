@@ -23,6 +23,54 @@ var buffer_t := 0.0
 var sliding := false
 var slamming := false
 var trauma := 0.0
+var hp := 100.0
+var max_hp := 100.0
+var walk_mult := 1.0
+var just_slammed := false
+
+func _ready() -> void:
+	# seraph body: Blender-forged seraph.glb if present, else ivory primitives
+	var have_model := false
+	if ResourceLoader.exists("res://assets/models/seraph.glb"):
+		var ps := load("res://assets/models/seraph.glb") as PackedScene
+		if ps:
+			var inst := ps.instantiate() as Node3D
+			add_child(inst)
+			have_model = true
+	if not have_model:
+		var body := MeshInstance3D.new()
+		var cap := CapsuleMesh.new()
+		cap.radius = 0.5
+		cap.height = 1.6
+		body.mesh = cap
+		var bm := StandardMaterial3D.new()
+		bm.albedo_color = Color(0.95, 0.93, 0.85)
+		bm.emission_enabled = true
+		bm.emission = Color(1.0, 0.95, 0.75)
+		bm.emission_energy_multiplier = 0.5
+		body.material_override = bm
+		add_child(body)
+	# halo ring (iconic readable even with model)
+	var halo := MeshInstance3D.new()
+	var tor := TorusMesh.new()
+	tor.inner_radius = 0.08
+	tor.outer_radius = 0.55
+	halo.mesh = tor
+	var hm := StandardMaterial3D.new()
+	hm.albedo_color = Color(1, 0.9, 0.5)
+	hm.emission_enabled = true
+	hm.emission = Color(1.0, 0.8, 0.3)
+	hm.emission_energy_multiplier = 2.5
+	halo.material_override = hm
+	halo.position.y = 2.1
+	add_child(halo)
+	var col := CollisionShape3D.new()
+	var cs := CapsuleShape3D.new()
+	cs.radius = 0.5
+	cs.height = 1.6
+	col.shape = cs
+	col.position.y = 0.9
+	add_child(col)
 
 func _physics_process(dt: float) -> void:
 	var wish := Vector3(
@@ -59,6 +107,7 @@ func _physics_process(dt: float) -> void:
 	if slamming:
 		if is_on_floor():
 			slamming = false
+			just_slammed = true
 			trauma = minf(1.0, trauma + 0.55)  # caller spawns AoE of SLAM_AOE
 		move_and_slide()
 		return
@@ -73,7 +122,7 @@ func _physics_process(dt: float) -> void:
 		velocity.y -= GRAVITY * dt
 	else:
 		sliding = false
-		velocity.x = wish.x * WALK; velocity.z = wish.z * WALK
+		velocity.x = wish.x * WALK * walk_mult; velocity.z = wish.z * WALK * walk_mult
 		if velocity.y < 0.0: velocity.y = -0.5
 	move_and_slide()
 	trauma = maxf(0.0, trauma - dt * 1.6)
