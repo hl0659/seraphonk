@@ -13,6 +13,10 @@ SLAM_FALL = 1400.0
 SLAM_AOE = 120.0
 MAX_STAMINA = 3.0
 REGEN = 1.0
+COYOTE = 0.08
+BUFFER = 0.12
+JUMP_VZ = 560.0
+DASH_JUMP_VZ = 620.0
 
 @dataclass
 class MoveState:
@@ -60,16 +64,55 @@ def try_slam(s: MoveState) -> bool:
     s.vz = -SLAM_FALL
     return True
 
-def update(s: MoveState, wish: Vec2, dt: float, want_dash=False, want_slide=False, want_slam=False):
+def try_jump_grounded(s: MoveState) -> bool:
+    """Normal/coyote jump. Consumes buffer."""
+    s.airborne = True
+    s.sliding = False
+    s.vz = JUMP_VZ
+    s.z = max(s.z, 0.01)
+    s.coyote_t = 0.0
+    s.buffer_jump_t = 0.0
+    return True
+
+def update(s: MoveState, wish: Vec2, dt: float, want_dash=False, want_slide=False, want_slam=False, want_jump=False):
+    grounded = (not s.airborne) and (not s.slamming) and s.z <= 0.001
+    if want_jump:
+        s.buffer_jump_t = BUFFER
+    else:
+        s.buffer_jump_t = max(0.0, s.buffer_jump_t - dt)
+    if grounded:
+        s.coyote_t = COYOTE
+    else:
+        s.coyote_t = max(0.0, s.coyote_t - dt)
     if want_dash: try_dash(s, wish if wish.length() > 0 else Vec2(1, 0))
     if want_slam: try_slam(s)
-    # stamina regen paused while sliding
-    if not s.sliding:
+    # stamina regen paused while sliding (including entry frame intent)
+    sliding_intent = want_slide and not s.airborne and not s.slamming
+    if not s.sliding and not sliding_intent:
         s.stamina = min(MAX_STAMINA, s.stamina + REGEN * dt)
     if s.dash_t > 0:
         s.dash_t -= dt
     if s.iframes_t > 0:
         s.iframes_t -= dt
+    # dash-jump: buffered jump during dash = 2nd stamina, keeps dash momentum
+    if s.buffer_jump_t > 0 and s.dash_t > 0 and not s.slamming:
+        if s.stamina >= 1.0:
+            s.stamina -= 1.0
+            s.dash_t = 0.0
+            s.sliding = False
+            s.airborne = True
+            s.vz = DASH_JUMP_VZ
+            s.z = max(s.z, 0.01)
+            s.buffer_jump_t = 0.0
+            s.coyote_t = 0.0
+        else:
+            s.buffer_jump_t = 0.0
+    # slide-jump: cheap hop out of slide (1 total with prior slide = free jump)
+    elif s.buffer_jump_t > 0 and s.sliding and not s.airborne:
+        try_slide_jump(s)
+        s.buffer_jump_t = 0.0
+    elif s.buffer_jump_t > 0 and (grounded or s.coyote_t > 0) and not s.airborne and not s.slamming:
+        try_jump_grounded(s)
     if want_slide and not s.airborne:
         s.dash_t = 0.0  # slide cancels dash (dash-storage feel)
     if s.dash_t > 0:

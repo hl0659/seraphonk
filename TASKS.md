@@ -3,11 +3,11 @@
 ## M0 skeleton [x]
 - [x] Repo layout, docs, requirements, CI, smoke entry
 
-## M1 movement prototype (current)
-- [ ] `engine/movement.py` dash/slide/slam + stamina + coyote/buffer
-- [ ] Feel: trail, shake, hitstop hooks (headless-testable state, no gfx asserts)
-- [ ] Playtest scene: empty arena + pillars, 60fps fixed step
-- [ ] Tests: dash i-frames, slide preserves momentum, slam AoE values
+## M1 movement prototype [x]
+- [x] `engine/movement.py` dash/slide/slam + stamina + coyote/buffer
+- [x] Feel: trail, shake, hitstop hooks (headless-testable state, no gfx asserts)
+- [x] Playtest scene: empty arena + pillars, 60fps fixed step
+- [x] Tests: dash i-frames, slide preserves momentum, slam AoE values
 
 ## M2 combat core
 - [ ] Auto-weapon + 1 melee + 1 ranged, XP grace + level-up choice (3 options)
