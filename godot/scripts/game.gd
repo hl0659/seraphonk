@@ -57,6 +57,11 @@ var sens_mult := 1.0
 var shake_mult := 1.0
 var style := 0.0
 var style_label: Label
+var announce_label: Label
+var announce_t := 0.0
+var surge_t := 0.0
+var warden_enraged := false
+var tracers: Array = []  # beam visuals [{node, life}]
 var meta := {"runs": 0, "victories": 0, "kills": 0}
 
 func _load_settings() -> void:
@@ -393,6 +398,14 @@ func _build_hud() -> void:
 	style_label.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	style_label.position = Vector2(-140, 40)
 	hud_layer.add_child(style_label)
+	announce_label = Label.new()
+	announce_label.add_theme_font_size_override("font_size", 30)
+	announce_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	announce_label.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	announce_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	announce_label.position.y = 80
+	announce_label.visible = false
+	hud_layer.add_child(announce_label)
 
 func _unhandled_input(event: InputEvent) -> void:
 	# click-to-capture backup (primary path is _input below)
@@ -414,12 +427,22 @@ func _try_capture(event: InputEvent) -> void:
 					Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 	pause_label = Label.new()
 	pause_label.add_theme_font_size_override("font_size", 42)
-	pause_label.text = "PAUSED — ESC resume · R restart"
+	pause_label.text = "PAUSED"
 	pause_label.set_anchors_preset(Control.PRESET_FULL_RECT)
 	pause_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	pause_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	pause_label.visible = false
 	hud_layer.add_child(pause_label)
+	var pause_hint := Label.new()
+	pause_hint.name = "PauseHint"
+	pause_hint.add_theme_font_size_override("font_size", 18)
+	pause_hint.text = "ESC resume · R abandon run · look sensitivity applies live"
+	pause_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pause_hint.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	pause_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pause_hint.position.y -= 120
+	pause_hint.visible = false
+	hud_layer.add_child(pause_hint)
 
 func _build_shrines_chests() -> void:
 	var shrine_spots := [Vector3(-16, 0, 0), Vector3(16, 0, 0), Vector3(0, 0, 10)]
@@ -478,6 +501,7 @@ func _process(dt: float) -> void:
 	if Input.is_action_just_pressed("ui_cancel"):
 		get_tree().paused = not get_tree().paused
 		pause_label.visible = get_tree().paused
+		(hud_layer.get_node("PauseHint") as CanvasItem).visible = get_tree().paused
 		if DisplayServer.get_name() != "headless":
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE if get_tree().paused else Input.MOUSE_MODE_CAPTURED
 		return
@@ -507,6 +531,7 @@ func _process(dt: float) -> void:
 	_gate(dt)
 	_warden_fight(dt)
 	_rings(dt)
+	_tracers(dt)
 	_juice(dt)
 	_hud(dt)
 	# dash whoosh edge
@@ -515,11 +540,28 @@ func _process(dt: float) -> void:
 		sfx.call("play", "dash")
 	prev_dash = dnow
 
+func _announce(text: String, dur: float = 3.0) -> void:
+	announce_label.text = text
+	announce_label.visible = true
+	announce_t = dur
+	sfx.call("play", "boss")
+
 func _director(dt: float) -> void:
+	# surge events every minute: 15s of doubled pressure + announcement
+	if int(t) > 0 and int(t) % 60 == 0 and surge_t <= 0.0 and t < RUN_LEN:
+		surge_t = 15.0
+		_announce("THE FALLEN SURGE")
+	if surge_t > 0.0:
+		surge_t -= dt
+	if announce_t > 0.0:
+		announce_t -= dt
+		if announce_t <= 0.0:
+			announce_label.visible = false
 	# spawn pressure from budget curve; cap alive for perf (Megabonk-like chaos without meltdown)
 	var alive := enemies.size()
-	var want := int(minf(budget(t) * 0.6, 110.0))
-	spawn_acc += dt * (2.0 + t / 45.0)
+	var mult := 2.2 if surge_t > 0.0 else 1.0
+	var want := int(minf(budget(t) * 0.6 * mult, 110.0))
+	spawn_acc += dt * (2.0 + t / 45.0) * mult
 	var tick := int(t) % 90 == 0 and t > 5.0
 	var key := int(t)
 	if tick and not miniboss_done.get(key, false):
@@ -574,6 +616,9 @@ func _weapons(dt: float) -> void:
 		elif w["id"] == "choir":
 			w["cd"] = 0.7
 			_trumpet_volley(4 + qty, 26.0, 3)
+		elif w["id"] == "beams":
+			w["cd"] = maxf(0.9, 2.2 - w["lvl"] * 0.15)
+			_psalm_beams(1 + int(w["lvl"]) / 2, 30.0 + w["lvl"] * 12.0)
 
 func _nearest_enemy(max_d: float) -> Node3D:
 	var best: Node3D = null
@@ -608,6 +653,48 @@ func _trumpet_volley(count: int, dmg: float, pierce: int = 0) -> void:
 		p.call("setup", player.global_position + Vector3(0, 1.5, 0), dir, 26.0, dmg, 2.5, false, pierce)
 		projectiles.append(p)
 	sfx.call("play", "shoot")
+
+func _psalm_beams(count: int, dmg: float) -> void:
+	# hitscan rails down the crosshair with slight spread: pierce everything
+	var aim: Vector3 = -cam.global_transform.basis.z
+	var from: Vector3 = player.global_position + Vector3(0, 1.5, 0)
+	for i in count:
+		var dir: Vector3 = aim.rotated(Vector3.UP, (float(i) - float(count - 1) * 0.5) * 0.06)
+		var end := from + dir * 30.0
+		for e in enemies:
+			if not is_instance_valid(e):
+				continue
+			var en := e as Node3D
+			var to: Vector3 = (en.global_position + Vector3(0, 1.0, 0)) - from
+			var along := to.dot(dir)
+			if along < 0.5 or along > 30.0:
+				continue
+			if (to - dir * along).length() <= 1.2 + float(en.get("radius")):
+				en.call("damage", dmg, from)
+				_spawn_damage_number(en.global_position + Vector3(0, 2.0, 0), int(dmg))
+				if float(en.get("hp")) <= 0.0:
+					_kill_enemy(en, false)
+		_tracer(from, end)
+	sfx.call("play", "shoot")
+	trauma = minf(1.0, trauma + 0.12)
+
+func _tracer(from: Vector3, to: Vector3) -> void:
+	var mi := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	var length := from.distance_to(to)
+	bm.size = Vector3(0.12, 0.12, length)
+	mi.mesh = bm
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.7, 0.9, 1.0)
+	m.emission_enabled = true
+	m.emission = Color(0.5, 0.85, 1.0)
+	m.emission_energy_multiplier = 3.0
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mi.material_override = m
+	add_child(mi)
+	mi.global_position = (from + to) * 0.5
+	mi.look_at(to)
+	tracers.append({"node": mi, "life": 0.15})
 
 func _enemy_in_crosshair(min_dot: float) -> Node3D:
 	var aim: Vector3 = -cam.global_transform.basis.z
@@ -896,7 +983,8 @@ func _draft_options() -> Array:
 	if not trum.is_empty() and int(trum["lvl"]) >= WEAPON_MAX and int(tomes["zeal"]) >= 2 and _has_weapon("choir").is_empty():
 		pool.append({"kind": "evolve", "id": "choir", "from": "trumpet", "label": "EVOLVE: Choir Eternal (trumpet ascended)"})
 	var pool2: Array = [
-		{"kind": "weapon", "id": "trumpet", "label": "Trumpet Volley (auto, nearest)"},
+		{"kind": "weapon", "id": "trumpet", "label": "Trumpet Volley (auto aim)"},
+		{"kind": "weapon", "id": "beams", "label": "Psalm Beams (piercing rails)"},
 		{"kind": "tome", "id": "quantity", "label": "Tome of Quantity +projectile"},
 		{"kind": "tome", "id": "zeal", "label": "Tome of Zeal +attack speed"},
 		{"kind": "tome", "id": "radius", "label": "Tome of Radius +area/magnet"},
@@ -1028,6 +1116,17 @@ func _spawn_warden(gp: Vector3) -> void:
 	warden = e
 	sfx.call("play", "boss")
 
+func _tracers(dt: float) -> void:
+	var done: Array = []
+	for tr in tracers:
+		tr["life"] = float(tr["life"]) - dt
+		if float(tr["life"]) <= 0.0:
+			done.append(tr)
+			if is_instance_valid(tr["node"] as Node):
+				(tr["node"] as Node).queue_free()
+	for tr in done:
+		tracers.erase(tr)
+
 func _vendor(dt: float) -> void:
 	vendor_cd = maxf(0.0, vendor_cd - dt)
 	var d: float = player.global_position.distance_to(Vector3(10, 0, 8))
@@ -1048,10 +1147,14 @@ func _warden_fight(dt: float) -> void:
 	if warden == null or not is_instance_valid(warden):
 		warden = null
 		return
+	if not warden_enraged and float(warden.get("hp")) < float(warden.get("max_hp")) * 0.3:
+		warden_enraged = true
+		warden.set("contact", 32.0)
+		_announce("THE WARDEN RAGES")
 	warden_cd -= dt
 	if warden_cd > 0.0:
 		return
-	warden_cd = 6.0
+	warden_cd = 3.0 if warden_enraged else 6.0
 	if warden_phase % 2 == 0:
 		for i in 4:
 			if enemies.size() < 140:

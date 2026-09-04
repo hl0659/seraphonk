@@ -7,6 +7,7 @@ var player: CharacterBody3D = null
 var booted := false
 var checks := {}
 var seen_orbs := false
+var sim_k0 := 0
 
 func note(key: String, ok: bool) -> void:
 	checks[key] = ok
@@ -74,12 +75,48 @@ func _process(_dt: float) -> bool:
 					offered = true
 					game.call("_pick_draft", o)
 			note("evolve_offered", offered)
-		1700:
-			var ids: Array = []
+			(game.get("weapons") as Array).append({"id": "beams", "lvl": 3, "cd": 0.0})
+		1600:
+			sim_k0 = int(game.get("kills"))
+			var pre_ids: Array = []
 			for w in game.get("weapons"):
-				ids.append(w["id"])
-			note("wheel_equipped", "wheel" in ids)
-	if frames >= 1800:
+				pre_ids.append(w["id"])
+			note("wheel_equipped", "wheel" in pre_ids)
+			# isolate beams: strip other weapons so any kill is the rail
+			game.set("weapons", [{"id": "beams", "lvl": 3, "cd": 0.0}])
+			# park a chaser 10m down the crosshair: player faces -Z from spawn
+			player.global_position = Vector3(0, 0.5, 6)
+			(player as CharacterBody3D).rotation.y = 0.0
+			game.call("_spawn_enemy", false, false, "chaser")
+			var es3: Array = game.get("enemies")
+			if es3.size() > 0:
+				(es3[es3.size() - 1] as Node3D).global_position = Vector3(0, 0, -4)
+		1700:
+			pass  # wheel checked at 1600 (pre-strip)
+		1750:
+			note("beams_kill", int(game.get("kills")) > sim_k0)
+			game.set("t", 59.0)
+		2100:
+			note("surge_event", float(game.get("surge_t")) > 0.0)
+			game.set("t", 301.0)
+		2200:
+			player.global_position = Vector3(0, 0.5, -13)
+		2500:
+			note("warden_spawned", game.get("warden") != null)
+			if game.get("warden") != null:
+				(game.get("warden") as Node).set("hp", float((game.get("warden") as Node).get("max_hp")) * 0.1)
+		2700:
+			note("warden_enraged", bool(game.get("warden_enraged")))
+			if game.get("warden") != null:
+				var wp: Vector3 = (game.get("warden") as Node3D).global_position
+				game.call("_damage_area", wp, 10.0, 999999.0, true)
+		2900:
+			note("victory_on_warden_kill", bool(game.get("victory")))
+			game.set("victory", false)
+			game.set("t", 601.0)
+		3100:
+			note("wrath_swarm", (game.get("enemies") as Array).size() >= 10)
+	if frames >= 3300:
 		print("SIM2: done. summary:")
 		for k in checks.keys():
 			print("  ", k, "=", "PASS" if checks[k] else "FAIL")
