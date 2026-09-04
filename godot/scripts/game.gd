@@ -78,10 +78,20 @@ func _show_start() -> void:
 		return
 	get_tree().paused = true
 	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	var dim := ColorRect.new()
+	dim.name = "StartDim"
+	dim.color = Color(0.02, 0.02, 0.06, 0.85)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud_layer.add_child(dim)
+	var center := CenterContainer.new()
+	center.name = "StartCenter"
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud_layer.add_child(center)
 	var panel := PanelContainer.new()
 	panel.name = "StartPanel"
-	panel.set_anchors_preset(Control.PRESET_CENTER)
+	center.add_child(panel)
 	var vb := VBoxContainer.new()
+	vb.custom_minimum_size = Vector2(560, 0)
 	panel.add_child(vb)
 	var t := Label.new()
 	t.add_theme_font_size_override("font_size", 34)
@@ -99,12 +109,13 @@ func _show_start() -> void:
 	vb.add_child(c)
 	var b := Button.new()
 	b.text = "ASCEND"
-	b.pressed.connect(_start_game.bind(panel))
+	b.custom_minimum_size = Vector2(0, 48)
+	b.pressed.connect(_start_game)
 	vb.add_child(b)
-	hud_layer.add_child(panel)
 
-func _start_game(panel: PanelContainer) -> void:
-	panel.queue_free()
+func _start_game() -> void:
+	hud_layer.get_node("StartDim").queue_free()
+	hud_layer.get_node("StartCenter").queue_free()
 	get_tree().paused = false
 	if DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
@@ -219,12 +230,22 @@ func _build_hud() -> void:
 	hud_label.position = Vector2(12, 10)
 	hud_layer.add_child(hud_label)
 	draft_panel = PanelContainer.new()
-	draft_panel.visible = false
-	var vb := VBoxContainer.new()
-	vb.name = "Choices"
-	draft_panel.add_child(vb)
-	draft_panel.set_anchors_preset(Control.PRESET_CENTER)
-	hud_layer.add_child(draft_panel)
+	var draft_vb := VBoxContainer.new()
+	draft_vb.name = "Choices"
+	draft_vb.custom_minimum_size = Vector2(520, 0)
+	draft_panel.add_child(draft_vb)
+	var draft_dim := ColorRect.new()
+	draft_dim.name = "DraftDim"
+	draft_dim.color = Color(0, 0, 0, 0.65)
+	draft_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	draft_dim.visible = false
+	hud_layer.add_child(draft_dim)
+	var draft_center := CenterContainer.new()
+	draft_center.name = "DraftCenter"
+	draft_center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	draft_center.visible = false
+	draft_center.add_child(draft_panel)
+	hud_layer.add_child(draft_center)
 	title_label = Label.new()
 	title_label.add_theme_font_size_override("font_size", 15)
 	title_label.text = "WASD move · SHIFT dash · SPACE jump · CTRL slide/slam · aim with crosshair"
@@ -233,8 +254,8 @@ func _build_hud() -> void:
 	var objective := Label.new()
 	objective.name = "Objective"
 	objective.add_theme_font_size_override("font_size", 17)
-	objective.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	objective.position = Vector2(-260, 10)
+	objective.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	objective.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hud_layer.add_child(objective)
 	var cross := ColorRect.new()
 	cross.name = "Crosshair"
@@ -246,7 +267,9 @@ func _build_hud() -> void:
 	pause_label = Label.new()
 	pause_label.add_theme_font_size_override("font_size", 42)
 	pause_label.text = "PAUSED — ESC resume · R restart"
-	pause_label.set_anchors_preset(Control.PRESET_CENTER)
+	pause_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pause_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	pause_label.visible = false
 	hud_layer.add_child(pause_label)
 
@@ -558,13 +581,15 @@ func _open_draft() -> void:
 	var opts := _draft_options()
 	var title := Label.new()
 	title.text = "CHOIR %d — choose a blessing ( %d gold )" % [level, gold]
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(title)
 	for o in opts:
 		var b := Button.new()
 		b.text = o["label"]
 		b.pressed.connect(_pick_draft.bind(o))
 		vb.add_child(b)
-	draft_panel.visible = true
+	(hud_layer.get_node("DraftDim") as CanvasItem).visible = true
+	(hud_layer.get_node("DraftCenter") as CanvasItem).visible = true
 
 func _draft_options() -> Array:
 	var pool: Array = [
@@ -594,6 +619,8 @@ func _pick_draft(o: Dictionary) -> void:
 		if o["id"] == "swiftness":
 			player.set("walk_mult", float(player.get("walk_mult")) + 0.08)
 	draft_panel.visible = false
+	(hud_layer.get_node("DraftDim") as CanvasItem).visible = false
+	(hud_layer.get_node("DraftCenter") as CanvasItem).visible = false
 	draft_open = false
 	get_tree().paused = false
 	if DisplayServer.get_name() != "headless":
@@ -721,15 +748,21 @@ func _hud() -> void:
 			obj.text = "Survive · gather grace · Gate opens in %d:%02d" % [left / 60, left % 60]
 
 func _show_end(won: bool) -> void:
+	if DisplayServer.get_name() != "headless":
+		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	var l := Label.new()
 	l.add_theme_font_size_override("font_size", 42)
 	l.text = "ASCENDED — Gate sealed" if won else "FELL — the choir fades"
-	l.set_anchors_preset(Control.PRESET_CENTER)
+	l.set_anchors_preset(Control.PRESET_FULL_RECT)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	hud_layer.add_child(l)
 	var s := Label.new()
 	s.add_theme_font_size_override("font_size", 20)
 	var mins := int(t) / 60
 	var secs := int(t) % 60
 	s.text = "Lv %d · %d kills · %d gold · %02d:%02d — press R to try again" % [level, kills, gold, mins, secs]
-	s.position = Vector2(200, 400)
+	s.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	s.position.y -= 60
 	hud_layer.add_child(s)
