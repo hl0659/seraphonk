@@ -7,14 +7,22 @@ var radius := 0.6
 var contact := 8.0
 var elite := false
 var flying := false
+var kind := "chaser"  # chaser | wisp(flying) | cantor(shooter)
+var fire_cd := 0.0
 var base_y := 0.0
 var mesh: MeshInstance3D
 var mat: StandardMaterial3D
 var flash := 0.0
+var touch_cd := 0.0
 
-func setup(p_elite: bool, hp_scale: float, p_flying: bool = false) -> void:
+func setup(p_elite: bool, hp_scale: float, p_flying: bool = false, p_kind: String = "chaser") -> void:
 	elite = p_elite
-	flying = p_flying and not p_elite
+	flying = (p_flying or p_kind == "wisp") and not p_elite
+	kind = "chaser"
+	if flying:
+		kind = "wisp"
+	elif p_kind == "cantor" and not p_elite:
+		kind = "cantor"
 	var mult := 6.0 if elite else 1.0
 	max_hp = (90.0 if elite else 20.0) * hp_scale * mult / (6.0 if elite else 1.0)
 	if elite:
@@ -23,6 +31,28 @@ func setup(p_elite: bool, hp_scale: float, p_flying: bool = false) -> void:
 	speed = (3.4 if elite else 4.6 + randf() * 1.4) * (1.0 + hp_scale * 0.03)
 	radius = 1.1 if elite else 0.6
 	contact = 16.0 if elite else 8.0
+	if kind == "cantor":
+		hp = 15.0 * hp_scale
+		max_hp = hp
+		speed = 3.2
+		radius = 0.5
+		contact = 6.0
+		fire_cd = 1.5 + randf() * 1.5
+		mesh = MeshInstance3D.new()
+		var sp := CylinderMesh.new()
+		sp.top_radius = 0.15
+		sp.bottom_radius = 0.5
+		sp.height = 2.6
+		mesh.mesh = sp
+		mat = StandardMaterial3D.new()
+		mat.albedo_color = Color(0.3, 0.1, 0.45)
+		mat.emission_enabled = true
+		mat.emission = Color(0.7, 0.25, 1.0)
+		mat.emission_energy_multiplier = 1.2
+		mesh.material_override = mat
+		mesh.position.y = 1.3
+		add_child(mesh)
+		return
 	if flying:
 		hp = 12.0 * hp_scale
 		max_hp = hp
@@ -117,6 +147,7 @@ func damage(amount: float, from: Vector3) -> void:
 		global_position += push.normalized() * (0.25 if not elite else 0.05)
 
 func _process(dt: float) -> void:
+	touch_cd = maxf(0.0, touch_cd - dt)
 	if flash > 0.0:
 		flash = maxf(0.0, flash - dt * 6.0)
 		mat.emission_energy_multiplier = 0.7 + flash * 3.0

@@ -36,6 +36,7 @@ var just_slammed := false
 var yaw := 0.0
 var pitch := 0.0
 var bob_t := 0.0
+var sens_mult := 1.0
 var headless := false
 var cam: Camera3D
 var viewmodel: Node3D
@@ -80,8 +81,8 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var mm := event as InputEventMouseMotion
-		yaw -= mm.relative.x * MOUSE_SENS
-		pitch = clampf(pitch - mm.relative.y * MOUSE_SENS, PITCH_MIN, PITCH_MAX)
+		yaw -= mm.relative.x * MOUSE_SENS * sens_mult
+		pitch = clampf(pitch - mm.relative.y * MOUSE_SENS * sens_mult, PITCH_MIN, PITCH_MAX)
 		rotation.y = yaw
 		cam.rotation.x = pitch
 

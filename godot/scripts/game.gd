@@ -44,6 +44,28 @@ var gate_sealed := true
 var pause_label: Label
 var title_label: Label
 var dmg_label_count := 0
+var eprojectiles: Array = []  # hostile orbs
+var rings: Array = []  # warden shockwaves [{pos, r, node}]
+var warden_cd := 0.0
+var warden_phase := 0
+var vendor_cost := 30
+var vendor_cd := 0.0
+var dmg_flash := 0.0
+var vignette: ColorRect
+var sens_mult := 1.0
+var shake_mult := 1.0
+
+func _load_settings() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://seraphonk.cfg") == OK:
+		sens_mult = float(cfg.get_value("feel", "sensitivity", 1.0))
+		shake_mult = float(cfg.get_value("feel", "shake", 1.0))
+
+func _save_settings() -> void:
+	var cfg := ConfigFile.new()
+	cfg.set_value("feel", "sensitivity", sens_mult)
+	cfg.set_value("feel", "shake", shake_mult)
+	cfg.save("user://seraphonk.cfg")
 
 func _try_model(path: String) -> Node3D:
 	if not ResourceLoader.exists(path):
@@ -61,9 +83,11 @@ func budget(tt: float) -> float:
 func _ready() -> void:
 	# UI + manager must run while paused (start/draft/pause menus)
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	_load_settings()
 	player = $Player
 	cam = $Player/Cam
 	cam_base_fov = cam.fov
+	player.set("sens_mult", sens_mult)
 	sfx = Node.new()
 	sfx.set_script(load("res://scripts/sfx.gd"))
 	add_child(sfx)
@@ -114,6 +138,33 @@ func _show_start() -> void:
 	b.custom_minimum_size = Vector2(0, 48)
 	b.pressed.connect(_start_game)
 	vb.add_child(b)
+	var sh := HBoxContainer.new()
+	var shl := Label.new()
+	shl.text = "Look sensitivity"
+	sh.add_child(shl)
+	var ssl := HSlider.new()
+	ssl.min_value = 0.4
+	ssl.max_value = 2.2
+	ssl.step = 0.05
+	ssl.value = sens_mult
+	ssl.custom_minimum_size = Vector2(220, 0)
+	ssl.value_changed.connect(_on_sens_changed)
+	sh.add_child(ssl)
+	vb.add_child(sh)
+	var shb := CheckBox.new()
+	shb.text = "Screen shake"
+	shb.button_pressed = shake_mult > 0.0
+	shb.toggled.connect(_on_shake_toggled)
+	vb.add_child(shb)
+
+func _on_sens_changed(v: float) -> void:
+	sens_mult = v
+	player.set("sens_mult", v)
+	_save_settings()
+
+func _on_shake_toggled(on: bool) -> void:
+	shake_mult = 1.0 if on else 0.0
+	_save_settings()
 
 func _start_game() -> void:
 	hud_layer.get_node("StartDim").queue_free()
@@ -280,6 +331,12 @@ func _build_hud() -> void:
 	mouseln.position = Vector2(-110, 40)
 	mouseln.visible = false
 	hud_layer.add_child(mouseln)
+	vignette = ColorRect.new()
+	vignette.name = "Vignette"
+	vignette.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vignette.color = Color(0.7, 0.05, 0.1, 0.0)
+	vignette.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud_layer.add_child(vignette)
 
 func _unhandled_input(event: InputEvent) -> void:
 	# click-to-capture backup (primary path is _input below)
@@ -342,6 +399,21 @@ func _build_shrines_chests() -> void:
 		box.position = chest_spots[i] + Vector3(0, 0.4, 0)
 		add_child(box)
 		chests.append({"pos": chest_spots[i], "cost": 20 + i * 10, "opened": false, "node": box})
+	# Tithe vendor: golden pillar, touch to buy blessings (escalating)
+	var vend := MeshInstance3D.new()
+	var vm := CylinderMesh.new()
+	vm.top_radius = 0.7
+	vm.bottom_radius = 0.9
+	vm.height = 3.0
+	vend.mesh = vm
+	var vmat := StandardMaterial3D.new()
+	vmat.albedo_color = Color(0.9, 0.75, 0.3)
+	vmat.emission_enabled = true
+	vmat.emission = Color(1.0, 0.8, 0.25)
+	vmat.emission_energy_multiplier = 1.2
+	vend.material_override = vmat
+	vend.position = Vector3(10, 1.5, 8)
+	add_child(vend)
 
 func _process(dt: float) -> void:
 	if Input.is_action_just_pressed("ui_cancel"):
@@ -372,7 +444,10 @@ func _process(dt: float) -> void:
 	_pickups(dt)
 	_shrines(dt)
 	_chests()
+	_vendor(dt)
 	_gate(dt)
+	_warden_fight(dt)
+	_rings(dt)
 	_juice(dt)
 	_hud()
 	# dash whoosh edge
@@ -393,14 +468,21 @@ func _director(dt: float) -> void:
 		_spawn_enemy(true)
 	while spawn_acc >= 1.0 and alive < want:
 		spawn_acc -= 1.0
-		_spawn_enemy(false, randf() < 0.3)
+		_spawn_enemy(false, randf() < 0.25, _cantor_ok())
 		alive += 1
 	if t >= RUN_LEN and not victory:
-		# Wrath swarm: flood + end pressure
+		# Wrath swarm: flood + end pressure, hard-capped for perf
 		for i in 12:
-			_spawn_enemy(false, false)
+			if enemies.size() < 140:
+				_spawn_enemy(false, false)
 
-func _spawn_enemy(elite: bool, flying: bool = false) -> void:
+func _cantor_ok() -> String:
+	# cantors (ranged pressure) join after the first minute
+	if t > 60.0 and randf() < 0.3:
+		return "cantor"
+	return "chaser"
+
+func _spawn_enemy(elite: bool, flying: bool = false, kind: String = "chaser") -> void:
 	var e := Node3D.new()
 	e.set_script(load("res://scripts/enemy.gd"))
 	var ang := randf() * TAU
@@ -409,7 +491,7 @@ func _spawn_enemy(elite: bool, flying: bool = false) -> void:
 	e.position = Vector3(clampf(pp.x + cos(ang) * r, -ARENA.x * 0.5 + 1.0, ARENA.x * 0.5 - 1.0), 0, clampf(pp.z + sin(ang) * r, -ARENA.y * 0.5 + 1.0, ARENA.y * 0.5 - 1.0))
 	add_child(e)
 	var hp_scale := 1.0 + t / 120.0
-	e.call("setup", elite, hp_scale, flying)
+	e.call("setup", elite, hp_scale, flying, kind)
 	enemies.append(e)
 
 func _weapons(dt: float) -> void:
@@ -528,19 +610,10 @@ func _enemies(dt: float) -> void:
 			continue
 		var en := e as Node3D
 		if bool(en.get("flying")):
-			var anchor: Vector3 = pp + Vector3(0, 1.4, 0)
-			var to: Vector3 = anchor - en.global_position
-			var fd := to.length()
-			if fd > 0.1:
-				var fspd: float = float(en.get("speed"))
-				en.global_position += to.normalized() * fspd * dt
-				en.global_position.y = clampf(en.global_position.y, 1.2, 6.0)
-			if fd < 1.5 and float(player.get("iframes_t")) <= 0.0:
-				player.set("hp", float(player.get("hp")) - float(en.get("contact")) * dt * 1.5)
-				if float(player.get("hp")) <= 0.0 and not game_over:
-					game_over = true
-					sfx.call("play", "die")
-					_show_end(false)
+			_flyer_steer(en, dt, pp)
+			continue
+		if String(en.get("kind")) == "cantor":
+			_cantor_steer(en, dt, pp)
 			continue
 		var to_p: Vector3 = pp - en.global_position
 		to_p.y = 0.0
@@ -550,13 +623,54 @@ func _enemies(dt: float) -> void:
 			en.global_position += to_p.normalized() * spd * dt
 		# separation (cheap, sampled)
 		# contact damage with player i-frames respected
-		if d < 1.1 + float(en.get("radius")):
-			if float(player.get("iframes_t")) <= 0.0:
-				player.set("hp", float(player.get("hp")) - float(en.get("contact")) * dt * 1.5)
-				if float(player.get("hp")) <= 0.0 and not game_over:
-					game_over = true
-					sfx.call("play", "die")
-					_show_end(false)
+		if d < 1.1 + float(en.get("radius")) and float(en.get("touch_cd")) <= 0.0:
+			en.set("touch_cd", 0.55 + randf() * 0.2)
+			_hurt_player(float(en.get("contact")) * 0.5)
+
+func _flyer_steer(en: Node3D, dt: float, pp: Vector3) -> void:
+	var anchor: Vector3 = pp + Vector3(0, 1.4, 0)
+	var to: Vector3 = anchor - en.global_position
+	var fd := to.length()
+	if fd > 0.1:
+		var fspd: float = float(en.get("speed"))
+		en.global_position += to.normalized() * fspd * dt
+		en.global_position.y = clampf(en.global_position.y, 1.2, 6.0)
+	if fd < 1.5 and float(en.get("touch_cd")) <= 0.0:
+		en.set("touch_cd", 0.55 + randf() * 0.2)
+		_hurt_player(float(en.get("contact")) * 0.5)
+
+func _cantor_steer(en: Node3D, dt: float, pp: Vector3) -> void:
+	var flat: Vector3 = pp - en.global_position
+	flat.y = 0.0
+	var d := flat.length()
+	var spd: float = float(en.get("speed"))
+	if d > 14.0:
+		en.global_position += flat.normalized() * spd * dt
+	elif d < 9.0 and d > 0.1:
+		en.global_position -= flat.normalized() * spd * dt
+	en.set("fire_cd", float(en.get("fire_cd")) - dt)
+	if float(en.get("fire_cd")) <= 0.0 and d < 26.0:
+		en.set("fire_cd", 2.5)
+		if eprojectiles.size() < 40:
+			var p := Node3D.new()
+			p.set_script(load("res://scripts/projectile.gd"))
+			add_child(p)
+			var from: Vector3 = en.global_position + Vector3(0, 1.6, 0)
+			var dir: Vector3 = ((pp + Vector3(0, 1.2, 0)) - from).normalized()
+			p.call("setup", from, dir, 14.0, 12.0, 4.0, true)
+			eprojectiles.append(p)
+
+func _hurt_player(amount: float) -> void:
+	if float(player.get("iframes_t")) > 0.0:
+		return
+	# early-run grace: contact ramps 50% -> 100% over the first 90s
+	var grace := 0.5 + 0.5 * minf(1.0, t / 90.0)
+	player.set("hp", float(player.get("hp")) - amount * grace)
+	dmg_flash = minf(1.0, dmg_flash + 0.45)
+	if float(player.get("hp")) <= 0.0 and not game_over:
+		game_over = true
+		sfx.call("play", "die")
+		_show_end(false)
 
 func _projectiles(dt: float) -> void:
 	var dead: Array = []
@@ -583,6 +697,25 @@ func _projectiles(dt: float) -> void:
 				break
 	for p in dead:
 		projectiles.erase(p)
+		if is_instance_valid(p):
+			(p as Node).queue_free()
+	# hostile orbs: dodge with dash i-frames, slide, or cover
+	var edead: Array = []
+	for p in eprojectiles:
+		if not is_instance_valid(p):
+			edead.append(p)
+			continue
+		var pr := p as Node3D
+		pr.call("tick", dt)
+		if bool(pr.get("dead")):
+			edead.append(p)
+			continue
+		if pr.global_position.distance_to(player.global_position + Vector3(0, 1.0, 0)) < 0.9:
+			_hurt_player(float(pr.get("dmg")))
+			pr.set("dead", true)
+			edead.append(p)
+	for p in edead:
+		eprojectiles.erase(p)
 		if is_instance_valid(p):
 			(p as Node).queue_free()
 
@@ -737,6 +870,73 @@ func _spawn_warden(gp: Vector3) -> void:
 	warden = e
 	sfx.call("play", "boss")
 
+func _vendor(dt: float) -> void:
+	vendor_cd = maxf(0.0, vendor_cd - dt)
+	var d: float = player.global_position.distance_to(Vector3(10, 0, 8))
+	if d < 2.2 and vendor_cd <= 0.0 and gold >= vendor_cost:
+		gold -= vendor_cost
+		vendor_cd = 1.0
+		player.set("hp", minf(float(player.get("max_hp")), float(player.get("hp")) + 20.0))
+		var keys := ["quantity", "zeal", "radius", "swiftness"]
+		var k: String = keys[randi() % keys.size()]
+		tomes[k] = int(tomes[k]) + 1
+		if k == "swiftness":
+			player.set("walk_mult", float(player.get("walk_mult")) + 0.08)
+		vendor_cost *= 2
+		sfx.call("play", "chest")
+		trauma = minf(1.0, trauma + 0.2)
+
+func _warden_fight(dt: float) -> void:
+	if warden == null or not is_instance_valid(warden):
+		warden = null
+		return
+	warden_cd -= dt
+	if warden_cd > 0.0:
+		return
+	warden_cd = 6.0
+	if warden_phase % 2 == 0:
+		for i in 4:
+			if enemies.size() < 140:
+				_spawn_enemy(false, false, "chaser")
+		sfx.call("play", "boss")
+	else:
+		var ring := MeshInstance3D.new()
+		var tor := TorusMesh.new()
+		tor.inner_radius = 0.2
+		tor.outer_radius = 1.0
+		ring.mesh = tor
+		var m := StandardMaterial3D.new()
+		m.albedo_color = Color(1, 0.3, 0.2)
+		m.emission_enabled = true
+		m.emission = Color(1.0, 0.2, 0.1)
+		m.emission_energy_multiplier = 2.5
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		ring.material_override = m
+		ring.position = (warden as Node3D).global_position + Vector3(0, 0.6, 0)
+		add_child(ring)
+		rings.append({"pos": (warden as Node3D).global_position, "r": 1.0, "node": ring, "hit": false})
+		sfx.call("play", "slam")
+	warden_phase += 1
+
+func _rings(dt: float) -> void:
+	var done: Array = []
+	for r in rings:
+		r["r"] = float(r["r"]) + dt * 7.0
+		var n := r["node"] as MeshInstance3D
+		if not is_instance_valid(n):
+			done.append(r)
+			continue
+		n.scale = Vector3(float(r["r"]), 1.0, float(r["r"]))
+		var pd: float = Vector2(player.global_position.x - (r["pos"] as Vector3).x, player.global_position.z - (r["pos"] as Vector3).z).length()
+		if not bool(r["hit"]) and absf(pd - float(r["r"])) < 1.2 and player.global_position.y < 1.0:
+			r["hit"] = true
+			_hurt_player(20.0)
+		if float(r["r"]) > 12.0:
+			done.append(r)
+			n.queue_free()
+	for r in done:
+		rings.erase(r)
+
 func _spawn_damage_number(pos: Vector3, amount: int) -> void:
 	if dmg_label_count > 40:
 		return
@@ -760,11 +960,14 @@ func _free_damage_number(l: Label3D) -> void:
 
 func _juice(dt: float) -> void:
 	trauma = maxf(0.0, trauma - dt * 1.8)
+	dmg_flash = maxf(0.0, dmg_flash - dt * 1.4)
+	if vignette:
+		vignette.color.a = dmg_flash * 0.45
 	# player owns FOV; game only adds positional shake here
 	if cam:
-		var sh := trauma * trauma * 0.6
-		cam.h_offset = randf_range(-sh, sh)
-		cam.v_offset = randf_range(-sh, sh)
+		var sh := trauma * trauma * 0.6 * shake_mult
+		cam.h_offset = randf_range(-sh, sh) if shake_mult > 0.0 else 0.0
+		cam.v_offset = randf_range(-sh, sh) if shake_mult > 0.0 else 0.0
 	# slam AoE hook from player
 	if player.get("just_slammed"):
 		player.set("just_slammed", false)
