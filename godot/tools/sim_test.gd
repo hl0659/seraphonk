@@ -54,7 +54,8 @@ func _process(_dt: float) -> bool:
 		1750:
 			Input.action_release("move_forward")
 		1800:
-			player.global_position = Vector3(-16, 0.5, 0)
+			# layouts are per-run: read live spots
+			player.global_position = ((game.get("shrines") as Array)[0]["pos"] as Vector3) + Vector3(0, 0.5, 0)
 			(player as CharacterBody3D).velocity = Vector3.ZERO
 		2100:
 			pass  # channeling... (headless runs ~150fps: 300 frames ~= 2s)
@@ -65,7 +66,7 @@ func _process(_dt: float) -> bool:
 					done = true
 			note("shrine_channel", done)
 			game.set("gold", 500)
-			player.global_position = Vector3(-8, 0.5, -11)
+			player.global_position = ((game.get("chests") as Array)[0]["pos"] as Vector3) + Vector3(0, 0.5, 0)
 		2700:
 			note("chest_open", int(game.get("chest_count")) > 0)
 		2800:

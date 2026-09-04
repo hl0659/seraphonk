@@ -8,6 +8,7 @@ var booted := false
 var checks := {}
 var seen_orbs := false
 var sim_k0 := 0
+var sim_elites: Array = []
 
 func note(key: String, ok: bool) -> void:
 	checks[key] = ok
@@ -36,6 +37,14 @@ func _process(_dt: float) -> bool:
 	match frames:
 		10:
 			game.set("t", 130.0)
+			game.call("_spawn_enemy", true, true, "herald")
+			game.call("_spawn_enemy", true, false, "bulwark")
+			var hk := []
+			for e in game.get("enemies"):
+				if bool((e as Node).get("elite")):
+					hk.append(String((e as Node).get("kind")))
+			print("SIM2 elite kinds: ", hk)
+			sim_elites = hk
 			game.call("_spawn_enemy", false, false, "brute")
 			var es: Array = game.get("enemies")
 			if es.size() > 0:
@@ -51,6 +60,9 @@ func _process(_dt: float) -> bool:
 				if String((e as Node).get("kind")) == "brute" and int((e as Node).get("charge_state")) > 0:
 					charged = true
 			note("brute_charges", charged)
+			note("elite_kinds", "wisp" in sim_elites and "brute" in sim_elites)
+			game.call("_record_run", false)
+			note("run_history", "first" not in game.call("_run_history_text"))
 			game.set("t", 301.0)
 		800:
 			player.global_position = Vector3(0, 0.5, -13)

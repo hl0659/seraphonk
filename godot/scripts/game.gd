@@ -87,6 +87,33 @@ func _save_meta() -> void:
 	cfg.set_value("meta", "kills", int(meta["kills"]) + kills)
 	cfg.save("user://seraphonk_meta.cfg")
 
+func _record_run(won: bool) -> void:
+	var mins := int(t) / 60
+	var secs := int(t) % 60
+	var line := "%s %02d:%02d Lv%d %dk" % ["WON" if won else "fell", mins, secs, level, kills]
+	var cfg := ConfigFile.new()
+	cfg.load("user://seraphonk_runs.cfg")
+	var hist: Array = []
+	if cfg.has_section("runs"):
+		for k in cfg.get_section_keys("runs"):
+			hist.append(str(cfg.get_value("runs", k, "")))
+	hist.push_front(line)
+	while hist.size() > 8:
+		hist.pop_back()
+	var out := ConfigFile.new()
+	for i in hist.size():
+		out.set_value("runs", "r%d" % i, hist[i])
+	out.save("user://seraphonk_runs.cfg")
+
+func _run_history_text() -> String:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://seraphonk_runs.cfg") != OK or not cfg.has_section("runs"):
+		return "No flights yet — this is your first."
+	var lines: Array = []
+	for k in cfg.get_section_keys("runs"):
+		lines.append(str(cfg.get_value("runs", k, "")))
+	return "Recent flights: " + " · ".join(lines)
+
 func _try_model(path: String) -> Node3D:
 	if not ResourceLoader.exists(path):
 		return null
@@ -161,6 +188,11 @@ func _show_start() -> void:
 		int(meta["runs"]), int(meta["victories"]), int(meta["kills"]),
 		10 * int(meta["victories"]), 5 * (int(meta["runs"]) / 3)]
 	vb.add_child(meta_l)
+	var hist := Label.new()
+	hist.add_theme_font_size_override("font_size", 13)
+	hist.text = _run_history_text()
+	hist.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(hist)
 	var c := Label.new()
 	c.add_theme_font_size_override("font_size", 16)
 	c.text = "WASD move (W = sprint) · MOUSE look · SHIFT dash (invincible) · SPACE jump (mid-dash = dash-jump) · CTRL slide, CTRL in air = slam · ESC pause · R restart"
@@ -248,8 +280,10 @@ func _build_arena() -> void:
 	floor_body.add_child(mesh)
 	floor_body.position = Vector3(0, -0.25, 0)
 	add_child(floor_body)
-	# glowing choir pillars (cover + slam reference)
-	var pillar_pos := [Vector3(-12, 0, -8), Vector3(12, 0, -8), Vector3(-12, 0, 8), Vector3(12, 0, 8), Vector3(0, 0, 0)]
+	# glowing choir pillars (cover + slam reference) — 5 of 8 candidate naves per run
+	var pillar_pool := [Vector3(-12, 0, -8), Vector3(12, 0, -8), Vector3(-12, 0, 8), Vector3(12, 0, 8), Vector3(0, 0, 0), Vector3(-6, 0, -5), Vector3(6, 0, 5), Vector3(-14, 0, 1), Vector3(14, 0, -1)]
+	pillar_pool.shuffle()
+	var pillar_pos := pillar_pool.slice(0, 5)
 	for i in pillar_pos.size():
 		var p: Vector3 = pillar_pos[i]
 		var sb := StaticBody3D.new()
@@ -281,8 +315,10 @@ func _build_arena() -> void:
 			sb.add_child(mi)
 		sb.position = Vector3(p.x, 0, p.z)
 		add_child(sb)
-	# jumpable choir platforms (slam-from-above plays, escape routes)
-	var plat_spots := [[Vector3(-6, 0, 4), 1.0], [Vector3(6, 0, -4), 1.0], [Vector3(0, 0, -9), 1.9]]
+	# jumpable choir platforms (slam-from-above plays, escape routes) — 3 of 5 per run
+	var plat_pool := [[Vector3(-6, 0, 4), 1.0], [Vector3(6, 0, -4), 1.0], [Vector3(0, 0, -9), 1.9], [Vector3(-9, 0, -3), 1.0], [Vector3(9, 0, 3), 1.9]]
+	plat_pool.shuffle()
+	var plat_spots := plat_pool.slice(0, 3)
 	for ps in plat_spots:
 		var ppos: Vector3 = ps[0]
 		var ph: float = ps[1]
@@ -445,7 +481,9 @@ func _try_capture(event: InputEvent) -> void:
 	hud_layer.add_child(pause_hint)
 
 func _build_shrines_chests() -> void:
-	var shrine_spots := [Vector3(-16, 0, 0), Vector3(16, 0, 0), Vector3(0, 0, 10)]
+	var shrine_pool := [Vector3(-16, 0, 0), Vector3(16, 0, 0), Vector3(0, 0, 10), Vector3(-10, 0, -10), Vector3(10, 0, -10)]
+	shrine_pool.shuffle()
+	var shrine_spots := shrine_pool.slice(0, 3)
 	for i in shrine_spots.size():
 		var ring := MeshInstance3D.new()
 		var tm := TorusMesh.new()
@@ -464,7 +502,9 @@ func _build_shrines_chests() -> void:
 		add_child(ring)
 		shrines.append({"pos": shrine_spots[i], "r": 2.5, "progress": 0.0, "done": false, "node": ring,
 			"marker": _marker("BLESS", shrine_spots[i] + Vector3(0, 3.0, 0), Color(0.4, 0.7, 1.0))})
-	var chest_spots := [Vector3(-8, 0, -11), Vector3(8, 0, -11), Vector3(0, 0, 12)]
+	var chest_pool := [Vector3(-8, 0, -11), Vector3(8, 0, -11), Vector3(0, 0, 12), Vector3(-15, 0, 6), Vector3(15, 0, 6)]
+	chest_pool.shuffle()
+	var chest_spots := chest_pool.slice(0, 3)
 	for i in chest_spots.size():
 		var box := MeshInstance3D.new()
 		var bm := BoxMesh.new()
@@ -566,7 +606,17 @@ func _director(dt: float) -> void:
 	var key := int(t)
 	if tick and not miniboss_done.get(key, false):
 		miniboss_done[key] = true
-		_spawn_enemy(true)
+		# miniboss variety: herald (apex wisp), bulwark (siege brute), fallen champion
+		var roll := randf()
+		if roll < 0.33:
+			_spawn_enemy(true, true, "herald")
+			_announce("A HERALD DESCENDS", 2.5)
+		elif roll < 0.66:
+			_spawn_enemy(true, false, "bulwark")
+			_announce("A BULWARK APPROACHES", 2.5)
+		else:
+			_spawn_enemy(true)
+			_announce("A CHAMPION RISES", 2.5)
 	while spawn_acc >= 1.0 and alive < want:
 		spawn_acc -= 1.0
 		_spawn_enemy(false, randf() < 0.25, _cantor_ok())
@@ -1264,6 +1314,7 @@ func _show_end(won: bool) -> void:
 	if won:
 		meta["victories"] = int(meta["victories"]) + 1
 	_save_meta()
+	_record_run(won)
 	if DisplayServer.get_name() != "headless":
 		Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 	var l := Label.new()

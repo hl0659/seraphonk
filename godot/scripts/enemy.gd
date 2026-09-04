@@ -20,20 +20,28 @@ var touch_cd := 0.0
 
 func setup(p_elite: bool, hp_scale: float, p_flying: bool = false, p_kind: String = "chaser") -> void:
 	elite = p_elite
-	flying = (p_flying or p_kind == "wisp") and not p_elite
+	# kinds: chaser, wisp, cantor, brute — plus elite herald (apex wisp) + bulwark (siege brute)
 	kind = "chaser"
-	if flying:
+	if p_kind in ["herald", "bulwark"] and elite:
+		kind = "wisp" if p_kind == "herald" else "brute"
+	elif p_flying or p_kind == "wisp":
 		kind = "wisp"
-	elif p_kind in ["cantor", "brute"] and not p_elite:
+	elif p_kind in ["cantor", "brute"]:
 		kind = p_kind
-	var mult := 6.0 if elite else 1.0
-	max_hp = (90.0 if elite else 20.0) * hp_scale * mult / (6.0 if elite else 1.0)
+	flying = kind == "wisp"
 	if elite:
-		max_hp = 90.0 * hp_scale
-	hp = max_hp
-	speed = (3.4 if elite else 4.6 + randf() * 1.4) * (1.0 + hp_scale * 0.03)
-	radius = 1.1 if elite else 0.6
-	contact = 16.0 if elite else 8.0
+		max_hp = (200.0 if kind == "brute" else 120.0 if kind == "wisp" else 90.0) * hp_scale
+		hp = max_hp
+		speed = (2.6 if kind == "brute" else 5.2 if kind == "wisp" else 3.4) * (1.0 + hp_scale * 0.02)
+		radius = 1.4 if kind == "brute" else 0.8 if kind == "wisp" else 1.1
+		contact = 22.0 if kind == "brute" else 18.0
+		_build_elite_visual()
+		return
+	hp = 20.0 * hp_scale
+	max_hp = hp
+	speed = (4.6 + randf() * 1.4) * (1.0 + hp_scale * 0.03)
+	radius = 0.6
+	contact = 8.0
 	if kind == "brute":
 		hp = 45.0 * hp_scale
 		max_hp = hp
@@ -160,6 +168,70 @@ func setup(p_elite: bool, hp_scale: float, p_flying: bool = false, p_kind: Strin
 		ring.material_override = rm
 		ring.position.y = radius * 2.6
 		add_child(ring)
+
+func _build_elite_visual() -> void:
+	# herald: apex wisp (pale gold storm); bulwark: siege brute (molten shell)
+	mesh = MeshInstance3D.new()
+	if kind == "wisp":
+		var wm := SphereMesh.new()
+		wm.radius = radius
+		wm.height = radius * 2.0
+		mesh.mesh = wm
+		base_y = 3.0
+		mesh.position.y = base_y
+	elif kind == "brute":
+		var bm := SphereMesh.new()
+		bm.radius = radius
+		bm.height = radius * 2.2
+		mesh.mesh = bm
+		mesh.scale = Vector3(1.25, 1.0, 1.0)
+		mesh.position.y = radius * 1.1
+	else:
+		if ResourceLoader.exists("res://assets/models/fallen.glb"):
+			var ps := load("res://assets/models/fallen.glb") as PackedScene
+			if ps:
+				mesh = null
+				var inst := ps.instantiate() as Node3D
+				inst.scale = Vector3(2.2, 2.2, 2.2)
+				add_child(inst)
+				mat = StandardMaterial3D.new()
+				_add_crown()
+				return
+		var sm := SphereMesh.new()
+		sm.radius = radius
+		sm.height = radius * 2.4
+		mesh.mesh = sm
+		mesh.position.y = radius * 1.5
+	mat = StandardMaterial3D.new()
+	if kind == "wisp":
+		mat.albedo_color = Color(1.0, 0.9, 0.6)
+		mat.emission = Color(1.0, 0.75, 0.25)
+	elif kind == "brute":
+		mat.albedo_color = Color(0.35, 0.05, 0.04)
+		mat.emission = Color(1.0, 0.35, 0.05)
+	else:
+		mat.albedo_color = Color(0.45, 0.08, 0.12)
+		mat.emission = Color(1.0, 0.15, 0.2)
+	mat.emission_enabled = true
+	mat.emission_energy_multiplier = 1.6
+	mesh.material_override = mat
+	add_child(mesh)
+	_add_crown()
+
+func _add_crown() -> void:
+	var ring := MeshInstance3D.new()
+	var tor := TorusMesh.new()
+	tor.inner_radius = 0.15
+	tor.outer_radius = radius + 0.5
+	ring.mesh = tor
+	var rm := StandardMaterial3D.new()
+	rm.albedo_color = Color(1, 0.8, 0.3)
+	rm.emission_enabled = true
+	rm.emission = Color(1, 0.7, 0.2)
+	rm.emission_energy_multiplier = 2.0
+	ring.material_override = rm
+	ring.position.y = radius * 2.6
+	add_child(ring)
 
 func damage(amount: float, from: Vector3) -> void:
 	hp -= amount
